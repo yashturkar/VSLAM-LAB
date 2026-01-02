@@ -66,9 +66,15 @@ compare.args = [
   { "arg" = "exp_yaml", "default" = "configs/exp_debug.yaml" }
 ]
 
+<<<<<<< HEAD
 get-resources.cmd = "python vslamlab_gui.py get-resources {{ exp_yaml }}"
 get-resources.args = [
   { "arg" = "exp_yaml", "default" = "configs/exp_vslamlab.yaml" }
+=======
+eval-metrics.cmd = "python vslamlab_gui.py eval_metrics {{ exp_yaml }}"
+eval-metrics.args = [
+  { "arg" = "exp_yaml", "default" = "configs/exp_debug.yaml" }
+>>>>>>> cbcaad3 (Add eval-metrics command to evaluate SLAM experiments and generate metrics.json files; update README with usage instructions and enhance trajectory CSV reading in utilities.py.)
 ]
 
 vslamlab-debug.depends-on = [{ "task" = "vslamlab", "args" = ["configs/exp_debug.yaml", "--overwrite"] }]

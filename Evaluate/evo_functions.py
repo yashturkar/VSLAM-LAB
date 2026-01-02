@@ -9,6 +9,7 @@ import subprocess
 import zipfile
 import pandas as pd
 import numpy as np
+import csv
 from utilities import find_files_with_string, read_trajectory_csv, save_trajectory_csv, read_trajectory_txt
 from path_constants import ABLATION_PARAMETERS_CSV, TRAJECTORY_FILE_NAME
 
@@ -32,11 +33,17 @@ def evo_metric(metric, groundtruth_csv, trajectory_csv, evaluation_folder, max_t
     if not trajectory_sorted.equals(traj_df):
         save_trajectory_csv(trajectory_csv, trajectory_sorted)
 
-    trajectory_sorted.to_csv(traj_txt, header=False, index=False, sep=' ', lineterminator='\n')
+    # Write TUM format without quotes - use numpy savetxt for proper formatting
+    # Convert to numeric first
+    trajectory_numeric = trajectory_sorted.apply(pd.to_numeric, errors='coerce')
+    np.savetxt(traj_txt, trajectory_numeric.values, fmt='%.6f', delimiter=' ', newline='\n')
 
     # Read groundtruth.csv
     gt_df = read_trajectory_csv(groundtruth_csv)
-    gt_df.to_csv(gt_txt, header=False, index=False, sep=' ', lineterminator='\n')
+    # Write TUM format without quotes - use numpy savetxt for proper formatting
+    # Convert to numeric first
+    gt_numeric = gt_df.apply(pd.to_numeric, errors='coerce')
+    np.savetxt(gt_txt, gt_numeric.values, fmt='%.6f', delimiter=' ', newline='\n')
 
     # Evaluate
     if metric == 'ate':     
@@ -45,8 +52,15 @@ def evo_metric(metric, groundtruth_csv, trajectory_csv, evaluation_folder, max_t
     if metric == 'rpe':
         command = f"evo_rpe tum {gt_txt} {traj_txt} --all_pairs --delta 5 -va -as --save_results {traj_zip}"
 
-    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    _, _ = process.communicate()
+    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    stdout, stderr = process.communicate()
+    
+    # If zip file wasn't created, return error with stderr for debugging
+    if not os.path.exists(traj_zip):
+        error_msg = f"Zip file not created: {traj_zip}"
+        if stderr:
+            error_msg += f"\nevo_ape error: {stderr[:500]}"  # First 500 chars of error
+        return [False, error_msg]
 
     if not os.path.exists(traj_zip):
         return [False, f"Zip file not created: {traj_zip}"]
