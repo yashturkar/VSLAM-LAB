@@ -11,7 +11,8 @@ from Baselines.get_baseline import list_available_baselines, get_baseline
 from Run.run_functions import run_sequence
 from Evaluate.evaluate_functions import evaluate_sequence
 from Evaluate import compare_functions
-from path_constants import VSLAMLAB_BENCHMARK, VSLAMLAB_EVALUATION, VSLAM_LAB_DIR, CONFIG_DEFAULT, VSLAMLAB_VIDEOS, COMPARISONS_YAML_DEFAULT
+from Evaluate.metrics_json import generate_metrics_json
+from path_constants import VSLAMLAB_BENCHMARK, VSLAMLAB_EVALUATION, VSLAM_LAB_DIR, CONFIG_DEFAULT, VSLAMLAB_VIDEOS, COMPARISONS_YAML_DEFAULT, TRAJECTORY_FILE_NAME
 
 SCRIPT_LABEL = f"\033[95m[{os.path.basename(__file__)}]\033[0m "
 
@@ -153,6 +154,85 @@ def evaluate_exp(exp_yaml: str | Path, overwrite: bool = False) -> None:
                         print_msg(f"\n{SCRIPT_LABEL}", f"Evaluating (in {VSLAMLAB_EVALUATION}) ...")
                         first_evaluation_found = False
                     evaluate_sequence(exp, dataset, sequence_name, overwrite)
+
+##################################################################################################################################################
+# eval_metrics
+##################################################################################################################################################
+##################################################################################################################################################
+def eval_metrics(exp_yaml: str | Path) -> None:
+    """
+    Run SLAM, evaluate trajectories, and generate metrics.json files.
+    
+    This function:
+    1. Runs SLAM experiments (run_exp)
+    2. Evaluates trajectories (evaluate_exp)
+    3. Generates metrics.json files in the evaluation folder for each sequence
+    """
+    # Step 1: Run SLAM
+    print_msg(f"\n{SCRIPT_LABEL}", f"Running SLAM experiments: {exp_yaml}")
+    run_exp(exp_yaml)
+    
+    # Step 2: Evaluate trajectories
+    print_msg(f"\n{SCRIPT_LABEL}", f"Evaluating trajectories: {exp_yaml}")
+    evaluate_exp(exp_yaml, overwrite=False)
+    
+    # Step 3: Generate metrics.json files
+    print_msg(f"\n{SCRIPT_LABEL}", f"Generating metrics.json files: {exp_yaml}")
+    experiments = load_experiments(exp_yaml)
+    
+    for [_, exp] in experiments.items():
+        exp_log = read_csv(exp.log_csv)
+        with open(exp.config_yaml, 'r') as file:
+            config_file_data = yaml.safe_load(file)
+            for dataset_name, sequence_names in config_file_data.items():
+                dataset = get_dataset(dataset_name, VSLAMLAB_BENCHMARK)
+                for sequence_name in sequence_names:
+                    # Find all runs for this sequence that have been evaluated
+                    sequence_runs = exp_log[
+                        (exp_log["sequence_name"] == sequence_name) & 
+                        (exp_log["EVALUATION"] != "none") &
+                        (exp_log["EVALUATION"] != "failed")
+                    ]
+                    
+                    if sequence_runs.empty:
+                        # If no evaluated runs, try to generate for successful runs anyway
+                        sequence_runs = exp_log[
+                            (exp_log["sequence_name"] == sequence_name) & 
+                            (exp_log["SUCCESS"] == "True")
+                        ]
+                    
+                    for _, row in sequence_runs.iterrows():
+                        exp_it = str(row["exp_it"]).zfill(5)
+                        # Determine status based on whether trajectory exists and can be evaluated
+                        # Don't rely solely on SUCCESS field, as trajectories may exist even if SLAM marked as failed
+                        trajectories_path = os.path.join(exp.folder, dataset.dataset_folder, sequence_name)
+                        trajectory_csv = os.path.join(trajectories_path, f"{exp_it}_{TRAJECTORY_FILE_NAME}.csv")
+                        trajectory_txt = os.path.join(trajectories_path, f"{exp_it}_{TRAJECTORY_FILE_NAME}.txt")
+                        evaluation_folder = os.path.join(exp.folder, dataset.dataset_folder, sequence_name, 'vslamlab_evaluation')
+                        ate_csv = os.path.join(evaluation_folder, "ate.csv")
+                        
+                        # Check if trajectory exists and evaluation was successful
+                        trajectory_exists = os.path.exists(trajectory_csv) or os.path.exists(trajectory_txt)
+                        evaluation_successful = os.path.exists(ate_csv) and str(row.get("EVALUATION", "")) not in ["none", "failed"]
+                        
+                        # If trajectory exists and was evaluated, consider it SUCCESS
+                        if trajectory_exists and evaluation_successful:
+                            status = "SUCCESS"
+                        elif trajectory_exists:
+                            # Trajectory exists but not evaluated - still try to generate metrics
+                            status = "SUCCESS"
+                        else:
+                            # No trajectory file - mark as FAILURE
+                            status = "FAILURE"
+                        
+                        try:
+                            metrics_json_path = generate_metrics_json(
+                                exp, dataset, sequence_name, exp_it, status
+                            )
+                            if metrics_json_path:
+                                print_msg(f"{ws(4)}", f"Generated: {metrics_json_path}", verb='LOW')
+                        except Exception as e:
+                            print_msg(f"{ws(4)}", f"Error generating metrics.json for {sequence_name} (exp_it={exp_it}): {e}", "error")
 
 ##################################################################################################################################################
 # run_exp

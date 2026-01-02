@@ -144,6 +144,46 @@ pixi run download-datasets <dataset1> <dataset2>         # Example: pixi run dow
 pixi run run-exp <exp_yaml>                              # Example: pixi run run-exp configs/exp_vslamlab.yaml
 pixi run evaluate-exp <exp_yaml>                         # Example: pixi run evaluate-exp configs/exp_vslamlab.yaml
 pixi run compare-exp <exp_yaml>                          # Example: pixi run compare-exp configs/exp_vslamlab.yaml
+pixi run eval-metrics <exp_yaml>                         # Example: pixi run eval-metrics configs/exp_vslamlab.yaml
+
+```
+
+### eval-metrics Command
+
+The `eval-metrics` command runs SLAM experiments, evaluates trajectories, and generates `metrics.json` files in the PySLAM metrics format. This is useful for integration with optimization frameworks like Optuna.
+
+**Usage:**
+```bash
+pixi run eval-metrics <exp_yaml>
+```
+
+**What it does:**
+1. Runs SLAM experiments (`run_exp`)
+2. Evaluates trajectories (`evaluate_exp`)
+3. Generates `metrics.json` files in the evaluation folder for each sequence
+
+**Output:**
+The `metrics.json` file is saved at:
+```
+{exp.folder}/{dataset.dataset_folder}/{sequence_name}/vslamlab_evaluation/metrics.json
+```
+
+**Metrics included:**
+- `status`: "SUCCESS" or "FAILURE"
+- `rmse.translation`: Translation RMSE (meters)
+- `rmse.rotation`: Rotation RMSE (radians)
+- `rmse.total`: Combined RMSE (primary metric for optimization)
+- `ate.mean`, `ate.std`, `ate.rmse`, `ate.max`: Absolute Trajectory Error statistics
+- `trajectory_length`: Total length of predicted trajectory (meters)
+- `length_ratio`: Ratio of predicted to ground truth trajectory length
+- `timestamp`: ISO8601 formatted timestamp
+
+**Example:**
+```bash
+pixi run eval-metrics configs/exp_lightning.yaml
+```
+
+This will generate `metrics.json` files for all sequences in the experiment, which can be used by optimization frameworks or other tools that require standardized SLAM metrics.
 
 ```
 

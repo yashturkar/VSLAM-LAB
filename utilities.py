@@ -301,11 +301,22 @@ def print_msg(script_label, msg, flag="info", verb='NONE'):
     
 def read_trajectory_csv(csv_file):
     try:
-        trajectory = pd.read_csv(Path(csv_file))
+        # Try comma-separated first (standard CSV)
+        trajectory = pd.read_csv(Path(csv_file), sep=',')
         if trajectory.empty:
             trajectory = None
-    except (pd.errors.EmptyDataError, FileNotFoundError):
-        trajectory = None
+        # Check if we got a reasonable number of columns (should be 8 for trajectory)
+        elif len(trajectory.columns) == 1 and trajectory.columns[0].count(' ') > 0:
+            # Single column with spaces - try space-separated instead
+            trajectory = pd.read_csv(Path(csv_file), sep=' ')
+    except (pd.errors.EmptyDataError, FileNotFoundError, pd.errors.ParserError):
+        try:
+            # If that fails, try space-separated (TUM format saved as CSV)
+            trajectory = pd.read_csv(Path(csv_file), sep=' ')
+            if trajectory.empty:
+                trajectory = None
+        except (pd.errors.EmptyDataError, FileNotFoundError, pd.errors.ParserError):
+            trajectory = None
     return trajectory
 
 def read_trajectory_txt(txt_file):
