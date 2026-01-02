@@ -1,0 +1,6 @@
+exp_lightning:
+  Config: config_lightning.yaml
+  NumRuns: 1
+  Parameters: {verbose: 1}
+  Module: mast3rslam
+
