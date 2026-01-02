@@ -67,7 +67,7 @@ def evo_metric(metric, groundtruth_csv, trajectory_csv, evaluation_folder, max_t
         return [False, f"Aligned trajectory file is empty: {aligned_trajectory_file}"]
     aligned_trajectory.columns = ['ts', 'tx', 'ty', 'tz', 'qx', 'qy', 'qz', 'qw']
     aligned_trajectory = aligned_trajectory.sort_values(by='ts')
-    save_trajectory_csv(aligned_trajectory_file, aligned_trajectory, header=True)
+    save_trajectory_csv(aligned_trajectory_file.replace(".tum", ".csv"), aligned_trajectory, header=True)
     
     # Write aligned gt
     with zipfile.ZipFile(traj_zip, 'r') as zip_ref:
@@ -83,7 +83,7 @@ def evo_metric(metric, groundtruth_csv, trajectory_csv, evaluation_folder, max_t
         return [False, f"Aligned gt file is empty: {gt_tum}"]
     aligned_gt.columns = ['ts', 'tx', 'ty', 'tz', 'qx', 'qy', 'qz', 'qw']
     aligned_gt = aligned_gt.sort_values(by='ts')
-    save_trajectory_csv(gt_tum, aligned_gt, header=True)
+    save_trajectory_csv(gt_tum.replace(".tum", ".csv"), aligned_gt, header=True)
 
     return [True, "Success"]
 
@@ -153,8 +153,27 @@ def find_groundtruth_txt(trajectories_path, trajectory_file, parameter):
 
 
 def compute_trajectory_length(trajectory_file):
-    df = pd.read_csv(trajectory_file, usecols=['tx', 'ty', 'tz'], delimiter=' ')
+    # Read TUM format file (may have header row, space-separated)
+    # Read without header first, then check if first row is a header
+    df = pd.read_csv(trajectory_file, header=None, sep=' ', usecols=[1, 2, 3], names=['tx', 'ty', 'tz'])
+    
+    # Check if first row looks like a header (contains 'tx' or other non-numeric values)
+    try:
+        first_val = df.iloc[0]['tx']
+        if isinstance(first_val, str) or first_val == 'tx':
+            # Skip header row
+            df = df.iloc[1:].reset_index(drop=True)
+    except (IndexError, KeyError):
+        pass
+    
+    # Convert to numeric, coercing any remaining non-numeric values
+    df = df.apply(pd.to_numeric, errors='coerce')
+    df = df.dropna()
+    if len(df) == 0:
+        return 0.0
     data = df.to_numpy()
+    if len(data) < 2:
+        return 0.0
     distances = np.linalg.norm(np.diff(data, axis=0), axis=1)
     trajectory_length = np.sum(distances)
     return trajectory_length

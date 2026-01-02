@@ -21,16 +21,19 @@ import glob
 import math
 import os
 import random
+import warnings
 from bisect import bisect_left, bisect_right
 from math import pi
 
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
+from matplotlib.backends.backend_pdf import PdfPages
 import numpy as np
 import pandas as pd
 from PIL import Image
 from matplotlib.patches import Patch
 from sklearn.decomposition import PCA
+from datetime import datetime
 
 from path_constants import VSLAM_LAB_EVALUATION_FOLDER, VSLAMLAB_EVALUATION
 from Baselines.get_baseline import get_baseline
@@ -94,6 +97,12 @@ def plot_trajectories(dataset_sequences, exp_names,
         for i_sequence, sequence_name in enumerate(sequence_names):
             #x_max , y_max = 0, 0
             aligment_with_gt = False
+            x_max = 1  # Initialize default values
+            y_max = 1
+            x_shift = 0
+            y_shift = 0
+            pca = None  # Initialize PCA
+            there_is_gt = False
             for i_exp, exp_name in enumerate(exp_names):
                 vslam_lab_evaluation_folder_seq = os.path.join(experiments[exp_name].folder, dataset_name.upper(),
                                                                sequence_name, VSLAM_LAB_EVALUATION_FOLDER)
@@ -102,37 +111,71 @@ def plot_trajectories(dataset_sequences, exp_names,
                     continue
 
                 if not aligment_with_gt:                   
-                    accu = accuracies[dataset_name][sequence_name][exp_name]['rmse'] / accuracies[dataset_name][sequence_name][exp_name]['num_tracked_frames']
+                    # Avoid division by zero - use num_evaluated_frames or rmse directly
+                    num_tracked = accuracies[dataset_name][sequence_name][exp_name]['num_tracked_frames']
+                    if (num_tracked > 0).any():
+                        accu = accuracies[dataset_name][sequence_name][exp_name]['rmse'] / num_tracked
+                    else:
+                        # If no tracked frames, just use rmse
+                        accu = accuracies[dataset_name][sequence_name][exp_name]['rmse']
                     idx = accu.idxmin()
                     gt_file = os.path.join(vslam_lab_evaluation_folder_seq, f'{idx:05d}_gt.tum')
                     there_is_gt = False
                     if os.path.exists(gt_file):
                         there_is_gt = True
-                        gt_traj = pd.read_csv(gt_file, delimiter=' ')
-                        pca_df = pd.DataFrame(gt_traj, columns=['tx', 'ty', 'tz'])
-                        pca = PCA(n_components=2)
-                        pca.fit(pca_df)
-                        gt_transformed = pca.transform(pca_df)
-                        x_shift = 1.2*gt_transformed[:, 0].min()
-                        y_shift = 1.2* gt_transformed[:, 1].min()
-                        x_max = 1.2* gt_transformed[:, 0].max() - x_shift
-                        y_max = 1.2* gt_transformed[:, 1].max() - y_shift
-                        axs[i_traj].plot(gt_transformed[:, 0]-x_shift, gt_transformed[:, 1]-y_shift, label='gt', linestyle='-', color='black')
-                    else:
-                        x_shift = 0
-                        y_shift = 0
-                        x_max = 1
-                        y_max = 1
+                        gt_traj = pd.read_csv(gt_file, delimiter=' ', header=None, names=['ts', 'tx', 'ty', 'tz', 'qx', 'qy', 'qz', 'qw'])
+                        # Check if first row is a header and skip it
+                        if len(gt_traj) > 0 and isinstance(gt_traj.iloc[0]['ts'], str):
+                            gt_traj = gt_traj.iloc[1:].reset_index(drop=True)
+                        # Convert to numeric
+                        gt_traj = gt_traj.apply(pd.to_numeric, errors='coerce')
+                        pca_df = gt_traj[['tx', 'ty', 'tz']].copy()
+                        # Remove NaN values
+                        pca_df = pca_df.dropna()
+                        if len(pca_df) > 0:
+                            pca = PCA(n_components=2)
+                            pca.fit(pca_df)
+                            gt_transformed = pca.transform(pca_df)
+                            x_shift = 1.2*gt_transformed[:, 0].min()
+                            y_shift = 1.2* gt_transformed[:, 1].min()
+                            x_max = 1.2* gt_transformed[:, 0].max() - x_shift
+                            y_max = 1.2* gt_transformed[:, 1].max() - y_shift
+                            axs[i_traj].plot(gt_transformed[:, 0]-x_shift, gt_transformed[:, 1]-y_shift, label='gt', linestyle='-', color='black')
+                        else:
+                            there_is_gt = False
+                            x_shift = 0
+                            y_shift = 0
+                            x_max = 1
+                            y_max = 1
+                else:
+                    there_is_gt = False
+                    x_shift = 0
+                    y_shift = 0
+                    x_max = 1
+                    y_max = 1
                     aligment_with_gt = True
 
                 search_pattern = os.path.join(vslam_lab_evaluation_folder_seq, '*_KeyFrameTrajectory.tum*')
                 files = glob.glob(search_pattern)
         
-                aligned_traj = pd.read_csv(files[idx], delimiter=' ')
-                pca_df = pd.DataFrame(aligned_traj, columns=['tx', 'ty', 'tz'])
                 if len(files) == 0:
                     continue
-                if there_is_gt:
+                
+                if idx >= len(files):
+                    continue
+                    
+                aligned_traj = pd.read_csv(files[idx], delimiter=' ', header=None, names=['ts', 'tx', 'ty', 'tz', 'qx', 'qy', 'qz', 'qw'])
+                # Check if first row is a header and skip it
+                if len(aligned_traj) > 0 and isinstance(aligned_traj.iloc[0]['ts'], str):
+                    aligned_traj = aligned_traj.iloc[1:].reset_index(drop=True)
+                # Convert to numeric
+                aligned_traj = aligned_traj.apply(pd.to_numeric, errors='coerce')
+                pca_df = aligned_traj[['tx', 'ty', 'tz']].copy()
+                # Remove NaN values
+                pca_df = pca_df.dropna()
+                if len(pca_df) == 0:
+                    continue
+                if there_is_gt and pca is not None:
                     traj_transformed = pca.transform(pca_df)
                 else:
                     traj_transformed = pca_df
@@ -144,6 +187,8 @@ def plot_trajectories(dataset_sequences, exp_names,
 
             x_ticks = [round(x_max, 1)]
             y_ticks = [0,round(y_max, 1)]
+            axs[i_traj].set_xlim([0, x_max])
+            axs[i_traj].set_ylim([0, y_max])
             axs[i_traj].set_xticks(x_ticks)
             axs[i_traj].set_yticks(y_ticks)
 
@@ -384,18 +429,22 @@ def radar_seq(values, dataset_sequences, exp_names, dataset_nicknames, metric_na
             for exp_name in exp_names:
                 values_dataset_sequence_exp = values[dataset_name][sequence_name][exp_name].copy()
                 if values_dataset_sequence_exp.empty:
-                    values_dataset_sequence_exp['rmse'] = pd.notna
-
-                medians[dataset_name][sequence_name][exp_name] = np.median(values_dataset_sequence_exp['rmse'])    
-                
-                if values_sequence[sequence_name].empty:
-                    values_sequence[sequence_name] = values_dataset_sequence_exp['rmse']
+                    # Set a default value to avoid RuntimeWarning, but mark as invalid
+                    medians[dataset_name][sequence_name][exp_name] = np.nan
                 else:
-                    values_sequence[sequence_name] = pd.concat([values_sequence[sequence_name],
-                                                                values_dataset_sequence_exp['rmse']],
-                                                               ignore_index=True)
+                    medians[dataset_name][sequence_name][exp_name] = np.median(values_dataset_sequence_exp['rmse'])    
+                
+                    if values_sequence[sequence_name].empty:
+                        values_sequence[sequence_name] = values_dataset_sequence_exp['rmse']
+                    else:
+                        values_sequence[sequence_name] = pd.concat([values_sequence[sequence_name],
+                                                                    values_dataset_sequence_exp['rmse']],
+                                                                   ignore_index=True)
 
-            median_sequence[sequence_name] = np.min(values_sequence[sequence_name])
+            if not values_sequence[sequence_name].empty:
+                median_sequence[sequence_name] = np.min(values_sequence[sequence_name])
+            else:
+                median_sequence[sequence_name] = np.nan
 
     num_vars = len(all_sequence_names)
     iExp = 0
@@ -405,8 +454,12 @@ def radar_seq(values, dataset_sequences, exp_names, dataset_nicknames, metric_na
         y[experiment_name] = []
         for dataset_name, sequence_names in dataset_sequences.items():
             for sequence_name in sequence_names:
-                y[experiment_name].append(
-                    medians[dataset_name][sequence_name][experiment_name] / median_sequence[sequence_name])
+                median_val = medians[dataset_name][sequence_name][experiment_name]
+                median_seq = median_sequence[sequence_name]
+                if not (np.isnan(median_val) or np.isnan(median_seq) or median_seq == 0):
+                    y[experiment_name].append(median_val / median_seq)
+                else:
+                    y[experiment_name].append(np.nan)
 
         #for i,yi in enumerate(y[experiment_name]): #INVERT ACCURACY
         #y[experiment_name][i] = 1/yi
@@ -638,7 +691,11 @@ def num_tracked_frames(values, dataset_sequences, figures_path, experiments, sha
             values_seq_exp = values[splt['dataset_name']][sequence_name][exp_name]
             if not values_seq_exp.empty:
                 num_frames = values[splt['dataset_name']][sequence_name][exp_name]['num_frames']
-                max_rgb[sequence_name] = max(max(num_frames), max_rgb[sequence_name])
+                if len(num_frames) > 0 and num_frames.max() > 0:
+                    max_rgb[sequence_name] = max(num_frames.max(), max_rgb[sequence_name])
+        # Ensure minimum value of 1 to avoid division by zero and identical ylims
+        if max_rgb[sequence_name] == 0:
+            max_rgb[sequence_name] = 1
 
     for sequence_name, splt in splts.items():
         for i_exp, exp_name in enumerate(exp_names):
@@ -651,13 +708,19 @@ def num_tracked_frames(values, dataset_sequences, figures_path, experiments, sha
             num_evaluated_frames = values_seq_exp['num_evaluated_frames']   
          
             if shared_scale:
-                num_frames /= max_rgb[sequence_name]
-                num_tracked_frames /= max_rgb[sequence_name]
-                num_evaluated_frames /= max_rgb[sequence_name]
+                # Avoid division by zero (max_rgb should be at least 1 now, but double-check)
+                divisor = max(max_rgb[sequence_name], 1)
+                num_frames /= divisor
+                num_tracked_frames /= divisor
+                num_evaluated_frames /= divisor
 
-            median_num_frames = np.median(num_frames)
-            median_num_tracked_frames = np.median(num_tracked_frames)
-            median_num_evaluated_frames = np.median(num_evaluated_frames)
+            # Handle empty arrays to avoid numpy warnings
+            # Suppress numpy warnings for empty arrays
+            with warnings.catch_warnings():
+                warnings.filterwarnings('ignore', category=RuntimeWarning)
+                median_num_frames = np.median(num_frames) if len(num_frames) > 0 else 0
+                median_num_tracked_frames = np.median(num_tracked_frames) if len(num_tracked_frames) > 0 else 0
+                median_num_evaluated_frames = np.median(num_evaluated_frames) if len(num_evaluated_frames) > 0 else 0
            
             positions = np.array([3 * i_exp, 3 * i_exp + 1, 3 * i_exp + 2]) * WIDTH_PER_SERIES
             axs[splt['id']].bar(
@@ -669,6 +732,9 @@ def num_tracked_frames(values, dataset_sequences, figures_path, experiments, sha
             boxprops = medianprops = whiskerprops = capprops = dict(color=colors[exp_name])
             flierprops = dict(marker='o', color=colors[exp_name], alpha=1.0)    
             for i, metric in enumerate(metrics):
+                # Skip boxplot if metric is empty to avoid numpy warnings
+                if len(metric) == 0:
+                    continue
                 positions = [(3 * i_exp + i) * WIDTH_PER_SERIES]
                 boxplot_accuracy = axs[splt['id']].boxplot(
                     metrics[i],
@@ -681,12 +747,19 @@ def num_tracked_frames(values, dataset_sequences, figures_path, experiments, sha
         if shared_scale:
             yticks = [0, 1]
         else:
-            yticks = [0, max_rgb[sequence_name]]
+            # Ensure max_rgb is at least 1 to avoid [0, 0] yticks
+            max_val = max(1, max_rgb[sequence_name])
+            yticks = [0, max_val]
         axs[splt['id']].grid(True, which='both', linestyle='--', linewidth=0.5, alpha=0.7)
         axs[splt['id']].set_xticklabels([])
-        axs[splt['id']].set_ylim(yticks)
+        # Only set ylim if yticks are valid (not identical)
+        if yticks[0] != yticks[1]:
+            axs[splt['id']].set_ylim(yticks)
+        else:
+            axs[splt['id']].set_ylim([0, 1])  # Default fallback
         axs[splt['id']].tick_params(axis='y', labelsize=FONT_SIZE) 
-        axs[splt['id']].yaxis.set_minor_locator(ticker.MultipleLocator(max_rgb[sequence_name] / 4))
+        if max_rgb[sequence_name] > 0:
+            axs[splt['id']].yaxis.set_minor_locator(ticker.MultipleLocator(max_rgb[sequence_name] / 4))
         axs[splt['id']].set_yticks(yticks)
         if not shared_scale:    
             axs[splt['id']].set_yticks(yticks)
@@ -756,26 +829,42 @@ def plot_table(ax, experiments, label, norm_label, sequence_nicknames, title = '
         all_logs.append(exp_log)
     
     df = pd.concat(all_logs, ignore_index=True)
+    
+    # Check if df is empty before proceeding
+    if len(df) == 0:
+        return
 
     # Per-sequence mean ± std
-    summary = df.groupby(['method_name', 'sequence_name'])['label_per_norm_label'].agg(['mean', 'std']).reset_index()
-    if norm_label == None:
-        summary['LABEL'] = summary.apply(lambda row: f"{row['mean']:.2f} ± {row['std']:.2f}" 
-                                            if not pd.isna(row['std']) 
-                                            else f"{row['mean']:.2f} ± 0.00", axis=1)
+    if len(df) > 0 and 'label_per_norm_label' in df.columns:
+        summary = df.groupby(['method_name', 'sequence_name'])['label_per_norm_label'].agg(['mean', 'std']).reset_index()
+        if len(summary) > 0:
+            if norm_label == None:
+                summary['LABEL'] = summary.apply(lambda row: f"{row['mean']:.2f} ± {row['std']:.2f}" 
+                                                    if not pd.isna(row['std']) 
+                                                    else f"{row['mean']:.2f} ± 0.00", axis=1)
+            else:
+                summary['LABEL'] = summary.apply(lambda row: f"{row['mean']:.2f}", axis=1)
+            
+            summary['sequence_name'] = summary['sequence_name'].map(sequence_nicknames).fillna(summary['sequence_name'])
+            pivot = summary.pivot(index='sequence_name', columns='method_name', values='LABEL').fillna('-')
+            pivot = pivot.reset_index()
+            pivot = pivot.rename(columns={'sequence_name': 'Sequence'})
+        else:
+            pivot = pd.DataFrame(columns=['Sequence'])
     else:
-        summary['LABEL'] = summary.apply(lambda row: f"{row['mean']:.2f}", axis=1)
-        
-    summary['sequence_name'] = summary['sequence_name'].map(sequence_nicknames).fillna(summary['sequence_name'])
-    pivot = summary.pivot(index='sequence_name', columns='method_name', values='LABEL').fillna('-')
-    pivot = pivot.reset_index()
-    pivot = pivot.rename(columns={'sequence_name': 'Sequence'})
+        pivot = pd.DataFrame(columns=['Sequence'])
 
     # Overall mean ± std per method
-    overall = df.groupby('method_name')['label_per_norm_label'].agg(['mean', 'std']).reset_index()
-    overall['LABEL'] = overall.apply(lambda row: f"{row['mean']:.2f} ± {row['std']:.2f}"
-                                     if not pd.isna(row['std']) 
-                                    else f"{row['mean']:.2f} ± 0.00", axis=1)
+    if len(df) > 0 and 'label_per_norm_label' in df.columns:
+        overall = df.groupby('method_name')['label_per_norm_label'].agg(['mean', 'std']).reset_index()
+        if len(overall) > 0:
+            overall['LABEL'] = overall.apply(lambda row: f"{row['mean']:.2f} ± {row['std']:.2f}"
+                                         if not pd.isna(row['std']) 
+                                        else f"{row['mean']:.2f} ± 0.00", axis=1)
+        else:
+            overall = pd.DataFrame(columns=['method_name', 'mean', 'std', 'LABEL'])
+    else:
+        overall = pd.DataFrame(columns=['method_name', 'mean', 'std', 'LABEL'])
     
     if norm_label != None:
         overall_row = {'Sequence': 'Overall'}
@@ -1375,6 +1464,550 @@ def plot_memory(figures_path, experiments, sequence_nicknames):
     ...
     
     #plot_table(experiments, 'TIME','num_frames')
+
+
+def _create_title_page(fig, experiments, dataset_sequences, exp_names):
+    """Create title page for the comprehensive report."""
+    fig.clear()
+    ax = fig.add_subplot(111)
+    ax.axis('off')
+    
+    # Title
+    title_y = 0.85
+    ax.text(0.5, title_y, 'VSLAM-LAB Evaluation Report', 
+            ha='center', va='top', fontsize=24, fontweight='bold')
+    
+    # Experiment names
+    exp_text = ', '.join(exp_names)
+    ax.text(0.5, 0.75, f'Experiments: {exp_text}', 
+            ha='center', va='top', fontsize=16)
+    
+    # Date
+    date_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    ax.text(0.5, 0.70, f'Generated: {date_str}', 
+            ha='center', va='top', fontsize=12, style='italic')
+    
+    # Dataset and sequence info
+    y_pos = 0.60
+    ax.text(0.5, y_pos, 'Dataset Information', 
+            ha='center', va='top', fontsize=14, fontweight='bold')
+    
+    y_pos -= 0.05
+    total_sequences = sum(len(seqs) for seqs in dataset_sequences.values())
+    ax.text(0.5, y_pos, f'Total Sequences: {total_sequences}', 
+            ha='center', va='top', fontsize=12)
+    
+    y_pos -= 0.04
+    for dataset_name, sequence_names in dataset_sequences.items():
+        ax.text(0.5, y_pos, f'{dataset_name.upper()}: {len(sequence_names)} sequences', 
+                ha='center', va='top', fontsize=11)
+        y_pos -= 0.03
+    
+    # VSLAM modules
+    y_pos -= 0.05
+    ax.text(0.5, y_pos, 'VSLAM Modules', 
+            ha='center', va='top', fontsize=14, fontweight='bold')
+    
+    y_pos -= 0.04
+    modules = set(exp.module for exp in experiments.values())
+    for module in modules:
+        ax.text(0.5, y_pos, f'• {module}', 
+                ha='center', va='top', fontsize=12)
+        y_pos -= 0.03
+
+
+def _create_summary_page(fig, accuracies, dataset_sequences, exp_names, dataset_nicknames):
+    """Create executive summary page with key metrics."""
+    fig.clear()
+    ax = fig.add_subplot(111)
+    ax.axis('off')
+    
+    y_pos = 0.95
+    ax.text(0.5, y_pos, 'Executive Summary', 
+            ha='center', va='top', fontsize=20, fontweight='bold')
+    
+    # Collect all metrics
+    all_rmse = []
+    sequence_rmse = {}
+    total_sequences = 0
+    successful_runs = 0
+    
+    for dataset_name, sequence_names in dataset_sequences.items():
+        for sequence_name in sequence_names:
+            total_sequences += 1
+            for exp_name in exp_names:
+                if not accuracies[dataset_name][sequence_name][exp_name].empty:
+                    successful_runs += 1
+                    rmse_vals = accuracies[dataset_name][sequence_name][exp_name]['rmse']
+                    if len(rmse_vals) > 0:
+                        avg_rmse = rmse_vals.mean()
+                        all_rmse.append(avg_rmse)
+                        seq_key = f"{dataset_nicknames[dataset_name][sequence_names.index(sequence_name)]}"
+                        if seq_key not in sequence_rmse:
+                            sequence_rmse[seq_key] = []
+                        sequence_rmse[seq_key].append(avg_rmse)
+    
+    y_pos = 0.80
+    ax.text(0.1, y_pos, 'Overall Statistics', 
+            ha='left', va='top', fontsize=14, fontweight='bold')
+    
+    y_pos -= 0.06
+    ax.text(0.1, y_pos, f'Total Sequences Evaluated: {total_sequences}', 
+            ha='left', va='top', fontsize=11)
+    
+    y_pos -= 0.05
+    ax.text(0.1, y_pos, f'Successful Runs: {successful_runs}', 
+            ha='left', va='top', fontsize=11)
+    
+    if len(all_rmse) > 0:
+        y_pos -= 0.05
+        avg_rmse = np.mean(all_rmse)
+        ax.text(0.1, y_pos, f'Average RMSE: {avg_rmse:.4f} m', 
+                ha='left', va='top', fontsize=11)
+        
+        y_pos -= 0.05
+        min_rmse = np.min(all_rmse)
+        max_rmse = np.max(all_rmse)
+        ax.text(0.1, y_pos, f'RMSE Range: {min_rmse:.4f} m - {max_rmse:.4f} m', 
+                ha='left', va='top', fontsize=11)
+    
+    # Best/worst sequences
+    y_pos -= 0.08
+    ax.text(0.1, y_pos, 'Performance Highlights', 
+            ha='left', va='top', fontsize=14, fontweight='bold')
+    
+    if sequence_rmse:
+        # Find best and worst
+        seq_avg_rmse = {seq: np.mean(vals) for seq, vals in sequence_rmse.items()}
+        best_seq = min(seq_avg_rmse.items(), key=lambda x: x[1])
+        worst_seq = max(seq_avg_rmse.items(), key=lambda x: x[1])
+        
+        y_pos -= 0.06
+        ax.text(0.1, y_pos, f'Best Performance: {best_seq[0]} (RMSE: {best_seq[1]:.4f} m)', 
+                ha='left', va='top', fontsize=11, color='green')
+        
+        y_pos -= 0.05
+        ax.text(0.1, y_pos, f'Worst Performance: {worst_seq[0]} (RMSE: {worst_seq[1]:.4f} m)', 
+                ha='left', va='top', fontsize=11, color='red')
+        
+        # Most consistent (lowest std)
+        seq_std_rmse = {seq: np.std(vals) for seq, vals in sequence_rmse.items() if len(vals) > 1}
+        if seq_std_rmse:
+            most_consistent = min(seq_std_rmse.items(), key=lambda x: x[1])
+            y_pos -= 0.05
+            ax.text(0.1, y_pos, f'Most Consistent: {most_consistent[0]} (Std: {most_consistent[1]:.4f} m)', 
+                    ha='left', va='top', fontsize=11, color='blue')
+
+
+def _create_metrics_table_page(fig, accuracies, dataset_sequences, exp_names, dataset_nicknames):
+    """Create detailed metrics table page."""
+    fig.clear()
+    ax = fig.add_subplot(111)
+    ax.axis('off')
+    
+    # Title
+    ax.text(0.5, 0.95, 'Detailed Metrics Table', 
+            ha='center', va='top', fontsize=18, fontweight='bold')
+    
+    # Build table data
+    table_data = []
+    headers = ['Sequence', 'Experiment', 'RMSE (m)', 'Mean (m)', 'Median (m)', 
+               'Std (m)', 'Min (m)', 'Max (m)', 'Tracked', 'Evaluated']
+    
+    for dataset_name, sequence_names in dataset_sequences.items():
+        for sequence_name in sequence_names:
+            seq_nickname = dataset_nicknames[dataset_name][sequence_names.index(sequence_name)]
+            for exp_name in exp_names:
+                if not accuracies[dataset_name][sequence_name][exp_name].empty:
+                    df = accuracies[dataset_name][sequence_name][exp_name]
+                    if len(df) > 0:
+                        row = [
+                            seq_nickname,
+                            exp_name,
+                            f"{df['rmse'].iloc[0]:.4f}",
+                            f"{df['mean'].iloc[0]:.4f}",
+                            f"{df['median'].iloc[0]:.4f}",
+                            f"{df['std'].iloc[0]:.4f}",
+                            f"{df['min'].iloc[0]:.4f}",
+                            f"{df['max'].iloc[0]:.4f}",
+                            f"{int(df['num_tracked_frames'].iloc[0])}",
+                            f"{int(df['num_evaluated_frames'].iloc[0])}"
+                        ]
+                        table_data.append(row)
+    
+    if table_data:
+        # Create table
+        table = ax.table(cellText=table_data, colLabels=headers, 
+                        loc='center', cellLoc='center', bbox=[0, 0, 1, 0.85])
+        table.auto_set_font_size(False)
+        table.set_fontsize(8)
+        table.scale(1.0, 1.5)
+        
+        # Style header
+        for i in range(len(headers)):
+            cell = table[(0, i)]
+            cell.set_facecolor('#4472C4')
+            cell.set_text_props(weight='bold', color='white')
+        
+        # Alternate row colors
+        for i, row in enumerate(table_data):
+            for j in range(len(headers)):
+                cell = table[(i+1, j)]
+                if i % 2 == 0:
+                    cell.set_facecolor('#F2F2F2')
+    else:
+        ax.text(0.5, 0.5, 'No metrics data available', 
+                ha='center', va='center', fontsize=12)
+
+
+def _create_per_sequence_page(fig, sequence_name, seq_nickname, accuracies, 
+                              dataset_name, exp_names, experiments):
+    """Create detailed page for a single sequence."""
+    fig.clear()
+    
+    # Title
+    fig.suptitle(f'Sequence Details: {seq_nickname}', fontsize=16, fontweight='bold', y=0.95)
+    
+    # Create two columns: metrics and info
+    gs = fig.add_gridspec(2, 2, hspace=0.3, wspace=0.3, top=0.90)
+    
+    # Metrics table
+    ax1 = fig.add_subplot(gs[0, :])
+    ax1.axis('off')
+    
+    table_data = []
+    for exp_name in exp_names:
+        if not accuracies[dataset_name][sequence_name][exp_name].empty:
+            df = accuracies[dataset_name][sequence_name][exp_name]
+            if len(df) > 0:
+                table_data = [
+                    ['Metric', 'Value'],
+                    ['RMSE (m)', f"{df['rmse'].iloc[0]:.4f}"],
+                    ['Mean Error (m)', f"{df['mean'].iloc[0]:.4f}"],
+                    ['Median Error (m)', f"{df['median'].iloc[0]:.4f}"],
+                    ['Std Deviation (m)', f"{df['std'].iloc[0]:.4f}"],
+                    ['Min Error (m)', f"{df['min'].iloc[0]:.4f}"],
+                    ['Max Error (m)', f"{df['max'].iloc[0]:.4f}"],
+                    ['Tracked Frames', f"{int(df['num_tracked_frames'].iloc[0])}"],
+                    ['Evaluated Frames', f"{int(df['num_evaluated_frames'].iloc[0])}"]
+                ]
+                if 'num_frames' in df.columns:
+                    table_data.append(['Total Frames', f"{int(df['num_frames'].iloc[0])}"])
+                break
+    
+    if table_data:
+        table = ax1.table(cellText=table_data[1:], colLabels=table_data[0],
+                         loc='center', cellLoc='left', bbox=[0, 0, 1, 1])
+        table.auto_set_font_size(False)
+        table.set_fontsize(10)
+        table.scale(1.0, 2.0)
+        
+        # Style header
+        for i in range(2):
+            cell = table[(0, i)]
+            cell.set_facecolor('#4472C4')
+            cell.set_text_props(weight='bold', color='white')
+    
+    # Experiment info
+    ax2 = fig.add_subplot(gs[1, 0])
+    ax2.axis('off')
+    info_text = 'Experiment Information:\n\n'
+    for exp_name in exp_names:
+        if exp_name in experiments:
+            exp = experiments[exp_name]
+            info_text += f'Experiment: {exp_name}\n'
+            info_text += f'Module: {exp.module}\n'
+            info_text += f'Runs: {exp.num_runs}\n\n'
+    ax2.text(0.1, 0.9, info_text, ha='left', va='top', fontsize=10, 
+             family='monospace', transform=ax2.transAxes)
+    
+    # Additional notes
+    ax3 = fig.add_subplot(gs[1, 1])
+    ax3.axis('off')
+    notes_text = 'Notes:\n\n'
+    notes_text += f'Sequence: {sequence_name}\n'
+    notes_text += f'Dataset: {dataset_name.upper()}\n'
+    ax3.text(0.1, 0.9, notes_text, ha='left', va='top', fontsize=10,
+             transform=ax3.transAxes)
+
+
+def generate_comprehensive_report(experiments, dataset_sequences, accuracies, 
+                                 comparison_path, exp_names, dataset_nicknames, 
+                                 figures_path):
+    """Generate a comprehensive multi-page PDF report."""
+    report_path = os.path.join(comparison_path, 'comprehensive_report.pdf')
+    
+    with PdfPages(report_path) as pdf:
+        # Page 1: Title Page
+        fig = plt.figure(figsize=(8.5, 11))
+        _create_title_page(fig, experiments, dataset_sequences, exp_names)
+        pdf.savefig(fig, bbox_inches='tight')
+        plt.close(fig)
+        
+        # Page 2: Executive Summary
+        fig = plt.figure(figsize=(8.5, 11))
+        _create_summary_page(fig, accuracies, dataset_sequences, exp_names, dataset_nicknames)
+        pdf.savefig(fig, bbox_inches='tight')
+        plt.close(fig)
+        
+        # Page 3: Metrics Table
+        fig = plt.figure(figsize=(11, 8.5))
+        _create_metrics_table_page(fig, accuracies, dataset_sequences, exp_names, dataset_nicknames)
+        pdf.savefig(fig, bbox_inches='tight')
+        plt.close(fig)
+        
+        # Pages 4+: Trajectory plots (recreate directly in report)
+        # Recreate trajectory plots by calling the plotting function
+        try:
+            # Calculate number of trajectories
+            num_trajectories = sum(len(seqs) for seqs in dataset_sequences.values())
+            num_rows = math.ceil(num_trajectories / 5)
+            xSize = 12
+            ySize = num_rows * 2
+            
+            fig, axs = plt.subplots(num_rows, 5, figsize=(xSize, ySize))
+            if num_rows == 1:
+                axs = axs.reshape(1, -1)
+            axs = axs.flatten()
+            
+            # Create legend handles
+            legend_handles = []
+            legend_handles.append(Patch(color='black', label='gt'))
+            for i_exp, exp_name in enumerate(exp_names):
+                legend_handles.append(Patch(color=colors[i_exp], label=exp_names[i_exp]))
+            
+            i_traj = 0
+            for i_dataset, (dataset_name, sequence_names) in enumerate(dataset_sequences.items()):
+                for i_sequence, sequence_name in enumerate(sequence_names):
+                    # Reuse the trajectory plotting logic from plot_trajectories
+                    aligment_with_gt = False
+                    x_max = 1
+                    y_max = 1
+                    x_shift = 0
+                    y_shift = 0
+                    pca = None
+                    there_is_gt = False
+                    
+                    for i_exp, exp_name in enumerate(exp_names):
+                        vslam_lab_evaluation_folder_seq = os.path.join(experiments[exp_name].folder, dataset_name.upper(),
+                                                                       sequence_name, VSLAM_LAB_EVALUATION_FOLDER)
+                        
+                        if accuracies[dataset_name][sequence_name][exp_name].empty:
+                            continue
+                        
+                        if not aligment_with_gt:
+                            num_tracked = accuracies[dataset_name][sequence_name][exp_name]['num_tracked_frames']
+                            if (num_tracked > 0).any():
+                                accu = accuracies[dataset_name][sequence_name][exp_name]['rmse'] / num_tracked
+                            else:
+                                accu = accuracies[dataset_name][sequence_name][exp_name]['rmse']
+                            idx = accu.idxmin()
+                            gt_file = os.path.join(vslam_lab_evaluation_folder_seq, f'{idx:05d}_gt.tum')
+                            there_is_gt = False
+                            if os.path.exists(gt_file):
+                                there_is_gt = True
+                                gt_traj = pd.read_csv(gt_file, delimiter=' ', header=None, names=['ts', 'tx', 'ty', 'tz', 'qx', 'qy', 'qz', 'qw'])
+                                if len(gt_traj) > 0 and isinstance(gt_traj.iloc[0]['ts'], str):
+                                    gt_traj = gt_traj.iloc[1:].reset_index(drop=True)
+                                gt_traj = gt_traj.apply(pd.to_numeric, errors='coerce')
+                                pca_df = gt_traj[['tx', 'ty', 'tz']].copy()
+                                pca_df = pca_df.dropna()
+                                if len(pca_df) > 0:
+                                    pca = PCA(n_components=2)
+                                    pca.fit(pca_df)
+                                    gt_transformed = pca.transform(pca_df)
+                                    x_shift = 1.2*gt_transformed[:, 0].min()
+                                    y_shift = 1.2* gt_transformed[:, 1].min()
+                                    x_max = 1.2* gt_transformed[:, 0].max() - x_shift
+                                    y_max = 1.2* gt_transformed[:, 1].max() - y_shift
+                                    axs[i_traj].plot(gt_transformed[:, 0]-x_shift, gt_transformed[:, 1]-y_shift, label='gt', linestyle='-', color='black')
+                                else:
+                                    there_is_gt = False
+                                    x_shift = 0
+                                    y_shift = 0
+                                    x_max = 1
+                                    y_max = 1
+                            else:
+                                there_is_gt = False
+                                x_shift = 0
+                                y_shift = 0
+                                x_max = 1
+                                y_max = 1
+                            aligment_with_gt = True
+                        
+                        search_pattern = os.path.join(vslam_lab_evaluation_folder_seq, '*_KeyFrameTrajectory.tum*')
+                        files = glob.glob(search_pattern)
+                        
+                        if len(files) == 0 or idx >= len(files):
+                            continue
+                        
+                        aligned_traj = pd.read_csv(files[idx], delimiter=' ', header=None, names=['ts', 'tx', 'ty', 'tz', 'qx', 'qy', 'qz', 'qw'])
+                        if len(aligned_traj) > 0 and isinstance(aligned_traj.iloc[0]['ts'], str):
+                            aligned_traj = aligned_traj.iloc[1:].reset_index(drop=True)
+                        aligned_traj = aligned_traj.apply(pd.to_numeric, errors='coerce')
+                        pca_df = aligned_traj[['tx', 'ty', 'tz']].copy()
+                        pca_df = pca_df.dropna()
+                        if len(pca_df) == 0:
+                            continue
+                        if there_is_gt and pca is not None:
+                            traj_transformed = pca.transform(pca_df)
+                        else:
+                            traj_transformed = pca_df.to_numpy()
+                        
+                        baseline = get_baseline(experiments[exp_name].module)
+                        axs[i_traj].plot(traj_transformed[:, 0]-x_shift, traj_transformed[:, 1]-y_shift,
+                                            label=exp_name, marker='.', linestyle='-', color=baseline.color)
+                    
+                    axs[i_traj].set_xlim([0, x_max])
+                    axs[i_traj].set_ylim([0, y_max])
+                    axs[i_traj].set_title(dataset_nicknames[dataset_name][i_sequence], fontsize=10)
+                    axs[i_traj].grid(True, linestyle='--', linewidth=0.5, alpha=0.7)
+                    i_traj += 1
+            
+            # Hide unused subplots
+            for i in range(i_traj, len(axs)):
+                axs[i].axis('off')
+            
+            fig.legend(handles=legend_handles, loc='lower center', ncol=len(legend_handles), fontsize=8)
+            plt.tight_layout(rect=[0, 0.1, 1, 0.95])
+            pdf.savefig(fig, bbox_inches='tight')
+            plt.close(fig)
+        except Exception as e:
+            # Fallback: try to load from existing PDF
+            trajectories_pdf = os.path.join(figures_path, 'trajectories.pdf')
+            if os.path.exists(trajectories_pdf):
+                try:
+                    import fitz  # PyMuPDF
+                    doc = fitz.open(trajectories_pdf)
+                    for page_num in range(len(doc)):
+                        page = doc[page_num]
+                        pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+                        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                        fig = plt.figure(figsize=(8.5, 11))
+                        ax = fig.add_subplot(111)
+                        ax.axis('off')
+                        ax.imshow(img, aspect='auto', extent=[0, 1, 0, 1])
+                        pdf.savefig(fig, bbox_inches='tight')
+                        plt.close(fig)
+                    doc.close()
+                except:
+                    pass
+        
+        # Pages N+: Accuracy boxplots (recreate directly)
+        try:
+            # Recreate boxplot using the same function logic
+            num_sequences = sum(len(seqs) for seqs in dataset_sequences.values())
+            NUM_COLS = 5
+            NUM_ROWS = math.ceil(num_sequences / NUM_COLS)
+            XSIZE, YSIZE = 12, 2 * NUM_ROWS + 0.5
+            fig, axs = plt.subplots(NUM_ROWS, NUM_COLS, figsize=(XSIZE, YSIZE))
+            if NUM_ROWS == 1:
+                axs = axs.reshape(1, -1)
+            axs = axs.flatten()
+            
+            legend_handles = []
+            colors_dict = {}
+            for i_exp, exp_name in enumerate(exp_names):
+                baseline = get_baseline(experiments[exp_name].module)
+                colors_dict[exp_name] = baseline.color
+                legend_handles.append(Patch(color=colors_dict[exp_name], label=exp_name))
+            
+            splt_idx = 0
+            for dataset_name, sequence_names in dataset_sequences.items():
+                for sequence_name in sequence_names:
+                    for i_exp, exp_name in enumerate(exp_names):
+                        values_seq_exp = accuracies[dataset_name][sequence_name][exp_name]
+                        if not values_seq_exp.empty:
+                            boxprops = medianprops = whiskerprops = capprops = dict(color=colors_dict[exp_name])
+                            flierprops = dict(marker='o', color=colors_dict[exp_name], alpha=1.0)
+                            positions = [i_exp * 0.3]
+                            axs[splt_idx].boxplot(values_seq_exp['rmse'], positions=positions, widths=0.2,
+                                                  boxprops=boxprops, medianprops=medianprops,
+                                                  whiskerprops=whiskerprops, capprops=capprops, flierprops=flierprops)
+                    
+                    seq_nickname = dataset_nicknames[dataset_name][sequence_names.index(sequence_name)]
+                    axs[splt_idx].set_title(seq_nickname, fontsize=10, fontweight='bold')
+                    axs[splt_idx].grid(True, linestyle='--', linewidth=0.5, alpha=0.7)
+                    splt_idx += 1
+            
+            # Hide unused subplots
+            for i in range(splt_idx, len(axs)):
+                axs[i].axis('off')
+            
+            fig.legend(handles=legend_handles, loc='lower center', ncol=len(legend_handles), fontsize=8)
+            plt.tight_layout(rect=[0, 0.1, 1, 0.95])
+            pdf.savefig(fig, bbox_inches='tight')
+            plt.close(fig)
+        except Exception as e:
+            # Fallback: try to load from existing PDF
+            rmse_boxplot_pdf = os.path.join(figures_path, 'rmse_boxplot.pdf')
+            if os.path.exists(rmse_boxplot_pdf):
+                try:
+                    import fitz  # PyMuPDF
+                    doc = fitz.open(rmse_boxplot_pdf)
+                    for page_num in range(len(doc)):
+                        page = doc[page_num]
+                        pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+                        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                        fig = plt.figure(figsize=(8.5, 11))
+                        ax = fig.add_subplot(111)
+                        ax.axis('off')
+                        ax.imshow(img, aspect='auto', extent=[0, 1, 0, 1])
+                        pdf.savefig(fig, bbox_inches='tight')
+                        plt.close(fig)
+                    doc.close()
+                except:
+                    pass
+        
+        # Pages M+: Per-sequence details
+        for dataset_name, sequence_names in dataset_sequences.items():
+            for sequence_name in sequence_names:
+                seq_nickname = dataset_nicknames[dataset_name][sequence_names.index(sequence_name)]
+                fig = plt.figure(figsize=(8.5, 11))
+                _create_per_sequence_page(fig, sequence_name, seq_nickname, accuracies, 
+                                         dataset_name, exp_names, experiments)
+                pdf.savefig(fig, bbox_inches='tight')
+                plt.close(fig)
+        
+        # Final Page: Experiment Configuration
+        fig = plt.figure(figsize=(8.5, 11))
+        ax = fig.add_subplot(111)
+        ax.axis('off')
+        
+        y_pos = 0.95
+        ax.text(0.5, y_pos, 'Experiment Configuration', 
+                ha='center', va='top', fontsize=18, fontweight='bold')
+        
+        y_pos = 0.85
+        for exp_name, exp in experiments.items():
+            ax.text(0.1, y_pos, f'Experiment: {exp_name}', 
+                    ha='left', va='top', fontsize=14, fontweight='bold')
+            y_pos -= 0.06
+            
+            ax.text(0.15, y_pos, f'Module: {exp.module}', 
+                    ha='left', va='top', fontsize=11)
+            y_pos -= 0.04
+            
+            ax.text(0.15, y_pos, f'Number of Runs: {exp.num_runs}', 
+                    ha='left', va='top', fontsize=11)
+            y_pos -= 0.04
+            
+            ax.text(0.15, y_pos, f'Config File: {os.path.basename(exp.config_yaml)}', 
+                    ha='left', va='top', fontsize=11)
+            y_pos -= 0.04
+            
+            if exp.parameters:
+                params_str = ', '.join([f'{k}: {v}' for k, v in exp.parameters.items()])
+                ax.text(0.15, y_pos, f'Parameters: {params_str}', 
+                        ha='left', va='top', fontsize=11, wrap=True)
+                y_pos -= 0.04
+            
+            y_pos -= 0.04  # Extra space between experiments
+        
+        pdf.savefig(fig, bbox_inches='tight')
+        plt.close(fig)
+    
+    print(f"Comprehensive report generated: {report_path}")
 
 
 

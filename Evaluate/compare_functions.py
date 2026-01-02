@@ -49,6 +49,12 @@ def full_comparison(experiments, VSLAMLAB_BENCHMARK, COMPARISONS_YAML_DEFAULT, c
         if comparisons[comparison]:
             switch_comparison(comparison)
 
+    # Generate comprehensive PDF report
+    plot_functions.generate_comprehensive_report(
+        experiments, dataset_sequences, accuracies, 
+        comparison_path, exp_names, dataset_nicknames, figures_path
+    )
+
     plt.show()
 
 

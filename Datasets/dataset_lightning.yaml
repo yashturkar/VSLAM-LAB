@@ -1,0 +1,29 @@
+dataset_name: lightning
+
+rgb_hz: 5.0
+raw_data_path: "/mnt/share/nas/eph/clid-dataset/davis-lightning-12-2025/Sequences/Processed"
+modes: ['mono']
+
+sequence_names:
+  - '101backdoor_p0.0_extract'
+  - '101backdoor_p0.5_extract'
+  - '101backdoor_p1.0_extract'
+  - '101out_p0.0_extract'
+  - '101out_p0.5_extract'
+  - '101out_p1.0_extract'
+  - '113through_p0.0_extract'
+  - '113through_p0.5_extract'
+  - '113through_p1.0_extract'
+  - 'lab2113_p0.0_extract'
+  - 'lab2113_p0.5_extract'
+  - 'lab2113_p1.0_extract'
+  - 'labin_p0.0_extract'
+  - 'labin_p0.5_extract'
+  - 'labin_p1.0_extract'
+  - 'tunnelin_p0.0_extract'
+  - 'tunnelin_p0.5_extract'
+  - 'tunnelin_p1.0_extract'
+  - 'tunnelout_p0.0_extract'
+  - 'tunnelout_p0.5_extract'
+  - 'tunnelout_p1.0_extract'
+

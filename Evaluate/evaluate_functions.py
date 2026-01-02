@@ -6,7 +6,7 @@ from pathlib import Path
 
 from Evaluate.evo_functions import evo_metric, evo_get_accuracy
 from path_constants import VSLAM_LAB_EVALUATION_FOLDER, TRAJECTORY_FILE_NAME, GROUNTRUTH_FILE
-from utilities import print_msg, ws, format_msg
+from utilities import print_msg, ws, format_msg, read_trajectory_txt, save_trajectory_csv
 
 SCRIPT_LABEL = f"\033[95m[{os.path.basename(__file__)}]\033[0m "
 
@@ -31,11 +31,16 @@ def evaluate_sequence(exp, dataset, sequence_name, overwrite=False):
     os.makedirs(evaluation_folder, exist_ok=True)
 
     # Find runs to evaluate
+    # Also evaluate sequences with SUCCESS=False if they have trajectory files (may have been saved despite failure)
     runs_to_evaluate = []
     for _, row in exp_log.iterrows():
-        if row["SUCCESS"] and (row["EVALUATION"] == 'none') and (row["sequence_name"] == sequence_name):
-            exp_it = str(row["exp_it"]).zfill(5) 
-            runs_to_evaluate.append(exp_it)
+        if (row["EVALUATION"] == 'none') and (row["sequence_name"] == sequence_name):
+            exp_it = str(row["exp_it"]).zfill(5)
+            # Check if trajectory file exists (either CSV or TXT)
+            traj_csv = os.path.join(trajectories_path, f"{exp_it}_{TRAJECTORY_FILE_NAME}.csv")
+            traj_txt = os.path.join(trajectories_path, f"{exp_it}_{TRAJECTORY_FILE_NAME}.txt")
+            if os.path.exists(traj_csv) or os.path.exists(traj_txt):
+                runs_to_evaluate.append(exp_it)
 
     print_msg(SCRIPT_LABEL, f"Evaluating '{evaluation_folder.replace(sequence_name, f"{dataset.dataset_color}{sequence_name}\033[0m")}'")
     if len(runs_to_evaluate) == 0:
@@ -45,7 +50,31 @@ def evaluate_sequence(exp, dataset, sequence_name, overwrite=False):
     # Evaluate runs
     zip_files = []
     for exp_it in tqdm(runs_to_evaluate):
-        trajectory_file = os.path.join(trajectories_path, f"{exp_it}_{TRAJECTORY_FILE_NAME}.csv")
+        # Try CSV first, then TXT
+        trajectory_file_csv = os.path.join(trajectories_path, f"{exp_it}_{TRAJECTORY_FILE_NAME}.csv")
+        trajectory_file_txt = os.path.join(trajectories_path, f"{exp_it}_{TRAJECTORY_FILE_NAME}.txt")
+        
+        trajectory_file = trajectory_file_csv
+        if not os.path.exists(trajectory_file_csv):
+            # If CSV doesn't exist, try TXT and convert to CSV
+            if os.path.exists(trajectory_file_txt):
+                traj_df = read_trajectory_txt(trajectory_file_txt)
+                if traj_df is not None and not traj_df.empty:
+                    # Add column names if needed (TUM format: ts tx ty tz qx qy qz qw)
+                    if len(traj_df.columns) >= 8:
+                        traj_df.columns = ['ts', 'tx', 'ty', 'tz', 'qx', 'qy', 'qz', 'qw']
+                    # Save as CSV with header
+                    save_trajectory_csv(trajectory_file_csv, traj_df, header=True)
+                    trajectory_file = trajectory_file_csv
+                else:
+                    exp_log.loc[(exp_log["exp_it"] == int(exp_it)) & (exp_log["sequence_name"] == sequence_name),"EVALUATION"] = 'failed'
+                    tqdm.write(format_msg(ws(8), f"Trajectory file is empty: {trajectory_file_txt}", "error"))
+                    continue
+            else:
+                exp_log.loc[(exp_log["exp_it"] == int(exp_it)) & (exp_log["sequence_name"] == sequence_name),"EVALUATION"] = 'failed'
+                tqdm.write(format_msg(ws(8), f"Trajectory file not found: {trajectory_file_csv} or {trajectory_file_txt}", "error"))
+                continue
+        
         success = evo_metric('ate', groundtruth_csv, trajectory_file, evaluation_folder, 1.0 / dataset.rgb_hz)
         if success[0]:
             zip_files.append(os.path.join(evaluation_folder, f"{exp_it}_{TRAJECTORY_FILE_NAME}.zip"))
@@ -91,7 +120,7 @@ def evaluate_sequence(exp, dataset, sequence_name, overwrite=False):
             exp_log.loc[run_mask, "num_tracked_frames"] = num_tracked_frames
 
             # Find number of evaluated frames
-            trajectory_file_tum = os.path.join(trajectories_path,VSLAM_LAB_EVALUATION_FOLDER, trajectory_file.replace(".csv", ".tum"))
+            trajectory_file_tum = os.path.join(trajectories_path,VSLAM_LAB_EVALUATION_FOLDER, trajectory_file.replace(".txt", ".tum"))
             if not os.path.exists(trajectory_file_tum):
                 exp_log.loc[(exp_log["exp_it"] == int(evaluated_run)) & (exp_log["sequence_name"] == sequence_name),"EVALUATION"] = 'failed'
                 continue
