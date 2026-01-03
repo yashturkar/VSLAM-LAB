@@ -3,7 +3,7 @@ import os, sys
 from vslamlab_utilities import baseline_info, print_datasets, print_baselines, validate_experiment_yaml, overwrite_exp
 from vslamlab_utilities import update_experiment_csv_logs, check_experiment_resources, get_experiment_resources, check_experiment_state
 from vslamlab_utilities import install_baseline, install_baselines, download_sequence, download_sequences, download_dataset, download_datasets
-from vslamlab_utilities import run_exp, evaluate_exp, compare_exp, eval_metrics, write_demo_yaml_fles
+from vslamlab_utilities import run_exp, evaluate_exp, compare_exp, eval_metrics, eval_metrics_single, write_demo_yaml_fles
 from path_constants import VSLAM_LAB_DIR
 
 SCRIPT_LABEL = f"\033[95m[{os.path.basename(__file__)}]\033[0m "
@@ -101,6 +101,10 @@ if __name__ == "__main__":
         if function_name == "eval_metrics":
             exp_yaml = sys.argv[2]
             eval_metrics(exp_yaml) 
+
+        if function_name == "eval_metrics_single":
+            config_yaml = sys.argv[2]
+            eval_metrics_single(config_yaml)
 
         # VSLAM-LAB main pipeline    
         if function_name == "vslamlab":

@@ -614,7 +614,17 @@ def create_and_show_canvas(dataset_sequences, VSLAMLAB_BENCHMARK, comparison_pat
             thumbnail_path = VSLAMLAB_EVALUATION / 'thumbnails'
             thumnail_rgb = f"rgb_thumbnail_{dataset_name}_{sequence_name}.*"
             matches = list(thumbnail_path.glob(thumnail_rgb))
-            image_paths.append(matches[0])
+            if matches:
+                image_paths.append(matches[0])
+            else:
+                # Skip if thumbnail doesn't exist - this is common for manually set up experiments
+                print(f"[create_and_show_canvas] Warning: Thumbnail not found for {dataset_name}/{sequence_name}, skipping...")
+                continue
+
+    # If no images found, skip creating canvas
+    if len(image_paths) == 0:
+        print("[create_and_show_canvas] No thumbnails found, skipping canvas creation")
+        return
 
     m = 5  # Number of columns
     n = math.ceil(len(image_paths) / m)  # Number of rows

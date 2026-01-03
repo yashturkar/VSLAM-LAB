@@ -36,34 +36,116 @@ def evo_metric(metric, groundtruth_csv, trajectory_csv, evaluation_folder, max_t
     # Write TUM format without quotes - use numpy savetxt for proper formatting
     # Convert to numeric first
     trajectory_numeric = trajectory_sorted.apply(pd.to_numeric, errors='coerce')
-    np.savetxt(traj_txt, trajectory_numeric.values, fmt='%.6f', delimiter=' ', newline='\n')
+    
+    # Check for NaN values after conversion
+    if trajectory_numeric.isna().any().any():
+        nan_count = trajectory_numeric.isna().sum().sum()
+        return [False, f"Trajectory contains {nan_count} NaN values after numeric conversion"]
 
     # Read groundtruth.csv
     gt_df = read_trajectory_csv(groundtruth_csv)
+    if gt_df is None:
+        return [False, f"Groundtruth .csv is empty: {groundtruth_csv}"]
+    if gt_df.empty:
+        return [False, f"Groundtruth .csv is empty: {groundtruth_csv}"]
+    
     # Write TUM format without quotes - use numpy savetxt for proper formatting
     # Convert to numeric first
     gt_numeric = gt_df.apply(pd.to_numeric, errors='coerce')
+    
+    # Check for NaN values after conversion
+    if gt_numeric.isna().any().any():
+        nan_count = gt_numeric.isna().sum().sum()
+        return [False, f"Groundtruth contains {nan_count} NaN values after numeric conversion"]
+    
+    # Validate minimum number of poses
+    if len(gt_numeric) < 2:
+        return [False, f"Groundtruth has too few poses: {len(gt_numeric)} (need at least 2)"]
+    if len(trajectory_numeric) < 2:
+        return [False, f"Trajectory has too few poses: {len(trajectory_numeric)} (need at least 2)"]
+    
+    # Check time overlap
+    traj_ts = trajectory_numeric.iloc[:, 0]
+    gt_ts = gt_numeric.iloc[:, 0]
+    traj_time_range = (traj_ts.min(), traj_ts.max())
+    gt_time_range = (gt_ts.min(), gt_ts.max())
+    overlap_start = max(traj_time_range[0], gt_time_range[0])
+    overlap_end = min(traj_time_range[1], gt_time_range[1])
+    
+    if overlap_end <= overlap_start:
+        return [False, f"No time overlap between trajectory ({traj_time_range[0]:.6f}-{traj_time_range[1]:.6f}) and groundtruth ({gt_time_range[0]:.6f}-{gt_time_range[1]:.6f})"]
+    
+    # Validate quaternions (if present - columns 4-7 should be qx, qy, qz, qw)
+    if len(trajectory_numeric.columns) >= 8:
+        q_cols = trajectory_numeric.iloc[:, 4:8]
+        q_norms = np.sqrt((q_cols ** 2).sum(axis=1))
+        invalid_quats = (q_norms < 0.1) | (q_norms > 10.0) | np.isnan(q_norms)
+        if invalid_quats.any():
+            invalid_count = invalid_quats.sum()
+            return [False, f"Trajectory contains {invalid_count} invalid quaternions (norm should be ~1.0)"]
+    
+    # Write TUM files after all validation passes
     np.savetxt(gt_txt, gt_numeric.values, fmt='%.6f', delimiter=' ', newline='\n')
+    np.savetxt(traj_txt, trajectory_numeric.values, fmt='%.6f', delimiter=' ', newline='\n')
 
     # Evaluate
-    if metric == 'ate':     
+    if metric == 'ate':
         command = (f"evo_ape tum {gt_txt} {traj_txt} -va -as "
                    f"--t_max_diff {max_time_difference} --save_results {traj_zip}")
     if metric == 'rpe':
         command = f"evo_rpe tum {gt_txt} {traj_txt} --all_pairs --delta 5 -va -as --save_results {traj_zip}"
 
     process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    stdout, stderr = process.communicate()
+    
+    # Add timeout to prevent hanging (5 minutes should be enough for most trajectories)
+    try:
+        stdout, stderr = process.communicate(timeout=300)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        # Get any output before timeout
+        try:
+            stdout, stderr = process.communicate(timeout=1)
+        except:
+            stdout, stderr = "", ""
+        
+        error_msg = f"evo_ape timed out after 5 minutes. Command: {command}"
+        error_msg += f"\nTrajectory file: {traj_txt}"
+        error_msg += f"\nGroundtruth file: {gt_txt}"
+        error_msg += f"\nMax time difference: {max_time_difference}"
+        
+        # Check if files exist and have content
+        if os.path.exists(traj_txt):
+            with open(traj_txt, 'r') as f:
+                traj_lines = len(f.readlines())
+            error_msg += f"\nTrajectory TUM file has {traj_lines} lines"
+        else:
+            error_msg += f"\nTrajectory TUM file does not exist: {traj_txt}"
+            
+        if os.path.exists(gt_txt):
+            with open(gt_txt, 'r') as f:
+                gt_lines = len(f.readlines())
+            error_msg += f"\nGroundtruth TUM file has {gt_lines} lines"
+        else:
+            error_msg += f"\nGroundtruth TUM file does not exist: {gt_txt}"
+        
+        if stderr:
+            error_msg += f"\nstderr: {stderr[:2000]}"
+        if stdout:
+            error_msg += f"\nstdout: {stdout[:2000]}"
+        return [False, error_msg]
+    
+    # Print stderr for debugging even if it succeeds (but only if there's content)
+    if stderr and stderr.strip():
+        print(f"[evo_metric] Warning: evo_ape stderr: {stderr[:500]}")
     
     # If zip file wasn't created, return error with stderr for debugging
     if not os.path.exists(traj_zip):
         error_msg = f"Zip file not created: {traj_zip}"
         if stderr:
-            error_msg += f"\nevo_ape error: {stderr[:500]}"  # First 500 chars of error
+            error_msg += f"\nevo_ape error: {stderr[:1000]}"  # First 1000 chars of error
+        if stdout:
+            error_msg += f"\nevo_ape output: {stdout[:1000]}"  # First 1000 chars of output
         return [False, error_msg]
-
-    if not os.path.exists(traj_zip):
-        return [False, f"Zip file not created: {traj_zip}"]
 
     # Write aligned trajectory
     with zipfile.ZipFile(traj_zip, 'r') as zip_ref:
