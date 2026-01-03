@@ -145,6 +145,7 @@ pixi run run-exp <exp_yaml>                              # Example: pixi run run
 pixi run evaluate-exp <exp_yaml>                         # Example: pixi run evaluate-exp configs/exp_vslamlab.yaml
 pixi run compare-exp <exp_yaml>                          # Example: pixi run compare-exp configs/exp_vslamlab.yaml
 pixi run eval-metrics <exp_yaml>                         # Example: pixi run eval-metrics configs/exp_vslamlab.yaml
+pixi run eval-metrics-single <config_yaml>              # Example: pixi run eval-metrics-single configs/single_lightning.yaml
 
 ```
 
@@ -184,6 +185,102 @@ pixi run eval-metrics configs/exp_lightning.yaml
 ```
 
 This will generate `metrics.json` files for all sequences in the experiment, which can be used by optimization frameworks or other tools that require standardized SLAM metrics.
+
+### eval-metrics-single Command
+
+The `eval-metrics-single` command runs SLAM and evaluation for a single sequence from a custom dataset location. This is useful when you have data in a non-standard location (e.g., from a Streamlit app or custom processing pipeline) and want to quickly evaluate a single sequence without setting up a full experiment.
+
+**Usage:**
+```bash
+pixi run eval-metrics-single <config_yaml>
+```
+
+**Configuration File Format:**
+
+Create a YAML file (e.g., `configs/single_lightning.yaml`) with the following structure:
+```yaml
+DATASET:
+  base_path: /tmp/lightning_pyslam_streamlit/streamlit_pyslam__n8xj0c4
+  name: sequence_6a933071
+  baseline: mast3rslam
+  groundtruth_format: kitti
+  output_dir: output
+  sensor_type: mono
+  dataset: /home/yashturkar/Workspace/VSLAM-LAB/Datasets/dataset_lightning.py
+```
+
+**Parameters:**
+- `base_path`: Path to the directory containing your sequence data (this is where input data is located)
+- `name`: Name of the sequence to evaluate
+- `baseline`: SLAM baseline to use (e.g., `mast3rslam`, `orbslam2`, `droidslam`)
+- `groundtruth_format`: Format of groundtruth poses (`kitti` or `tum`)
+- `output_dir`: Subdirectory name where results will be saved (relative to `base_path`)
+- `sensor_type`: Sensor type (`mono`, `rgbd`, `stereo`, etc.)
+- `dataset`: Path to the Python file containing the dataset class definition
+
+**What it does:**
+1. Loads the dataset class dynamically from the specified Python file
+2. Detects and converts non-standard file structures (e.g., Streamlit format) to VSLAM-LAB format
+3. Runs SLAM on the sequence
+4. Evaluates the trajectory using `evo_ape`
+5. Generates `metrics.json` and trajectory CSV files
+6. Creates a PDF trajectory report
+
+**Input Data Structure:**
+
+The command supports standard VSLAM-LAB structure or a "streamlit" structure:
+
+**Standard structure:**
+```
+{base_path}/{sequence_name}/
+  ├── rgb.csv
+  ├── calibration.yaml
+  ├── groundtruth.csv
+  └── rgb_0/ (or rgb_1/, etc.)
+```
+
+**Streamlit structure (auto-converted):**
+```
+{base_path}/
+  ├── image_0/          # Image files
+  ├── sequences/{name}/times.txt
+  ├── poses/{name}.txt  # Groundtruth poses
+  └── config.yaml       # Calibration data
+```
+
+**Output:**
+
+All results are saved to `{base_path}/{output_dir}/`:
+
+```
+{base_path}/{output_dir}/
+  ├── metrics.json              # Evaluation metrics
+  ├── 00000_KeyFrameTrajectory.csv  # Trajectory file
+  └── trajectory_report.pdf     # PDF report with trajectory plots
+```
+
+**Metrics included in `metrics.json`:**
+- `status`: "SUCCESS" or "FAILURE"
+- `rmse.translation`: Translation RMSE (meters)
+- `rmse.rotation`: Rotation RMSE (radians)
+- `rmse.total`: Combined RMSE
+- `ate.mean`, `ate.std`, `ate.rmse`, `ate.max`: Absolute Trajectory Error statistics
+- `trajectory_length`: Total length of predicted trajectory (meters)
+- `length_ratio`: Ratio of predicted to ground truth trajectory length (coverage)
+- `weighted_rmse`: Coverage-weighted RMSE = `RMSE / (length_ratio^2)`
+- `timestamp`: ISO8601 formatted timestamp
+
+**Example:**
+```bash
+pixi run eval-metrics-single configs/single_lightning.yaml
+```
+
+This will:
+- Run SLAM on the sequence at `/tmp/lightning_pyslam_streamlit/streamlit_pyslam__n8xj0c4`
+- Save results to `/tmp/lightning_pyslam_streamlit/streamlit_pyslam__n8xj0c4/output/`
+- Generate `metrics.json`, trajectory CSV, and PDF report
+
+**Note:** The command automatically suppresses GUI output when running SLAM, making it suitable for headless environments and batch processing.
 
 ```
 
