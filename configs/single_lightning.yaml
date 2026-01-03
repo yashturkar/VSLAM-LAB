@@ -1,0 +1,8 @@
+DATASET:
+  base_path: /tmp/streamlit_pyslam__n8xj0c4
+  name: sequence_6a933071
+  baseline: mast3rslam
+  groundtruth_format: kitti
+  output_dir: output
+  sensor_type: mono
+  dataset: /home/yashturkar/Workspace/VSLAM-LAB/Datasets/dataset_lightning.py
