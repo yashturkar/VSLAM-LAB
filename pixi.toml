@@ -76,6 +76,11 @@ eval-metrics-single.args = [
   { "arg" = "config_yaml", "default" = "configs/single_lightning.yaml" }
 ]
 
+demo-single.cmd = "python vslamlab_gui.py demo_single {{ config_yaml }}"
+demo-single.args = [
+  { "arg" = "config_yaml", "default" = "configs/single_lightning.yaml" }
+]
+
 vslamlab-debug.depends-on = [{ "task" = "vslamlab", "args" = ["configs/exp_debug.yaml", "--overwrite"] }]
 vslamlab-allfeature = [{ "task" = "vslamlab", "args" = ["configs/exp_allfeature.yaml", "--overwrite"] }]
 demo = "python vslamlab_gui.py demo"

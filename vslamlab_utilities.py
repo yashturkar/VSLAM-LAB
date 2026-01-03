@@ -886,6 +886,259 @@ def eval_metrics_single(config_yaml: str | Path) -> None:
     print_msg(f"\n{SCRIPT_LABEL}", f"Single sequence evaluation complete!")
     print_msg(f"{ws(4)}", f"Results saved to: {output_path}")
 
+def demo_single(config_yaml: str | Path) -> None:
+    """
+    Run SLAM with GUI enabled for a single sequence from a config YAML file.
+    
+    This function:
+    1. Loads a single sequence config
+    2. Dynamically loads the dataset class
+    3. Runs SLAM with GUI enabled (unlike eval-metrics-single which is headless)
+    
+    Similar to eval_metrics_single but:
+    - GUI is enabled (no headless mode)
+    - Does not evaluate or generate metrics
+    - Uses run_sequence() for full pipeline support
+    """
+    print_msg(f"\n{SCRIPT_LABEL}", f"Running single sequence demo with GUI: {config_yaml}")
+    
+    # Load config
+    config_data = load_yaml_file(config_yaml)
+    if "DATASET" not in config_data:
+        print_msg(SCRIPT_LABEL, "Error: Config must contain DATASET section", "error")
+        sys.exit(1)
+    
+    dataset_config = config_data["DATASET"]
+    base_path = Path(dataset_config["base_path"])
+    sequence_name = dataset_config["name"]
+    baseline_name = dataset_config["baseline"]
+    sensor_type = dataset_config.get("sensor_type", "mono")
+    dataset_file = Path(dataset_config["dataset"])
+    
+    # Validate paths
+    if not base_path.exists():
+        print_msg(SCRIPT_LABEL, f"Error: base_path does not exist: {base_path}", "error")
+        sys.exit(1)
+    
+    if not dataset_file.exists():
+        print_msg(SCRIPT_LABEL, f"Error: dataset file does not exist: {dataset_file}", "error")
+        sys.exit(1)
+    
+    # Dynamically load dataset class
+    print_msg(f"{SCRIPT_LABEL}", f"Loading dataset class from: {dataset_file}")
+    try:
+        DatasetClass = load_dataset_class_from_file(dataset_file)
+    except Exception as e:
+        print_msg(SCRIPT_LABEL, f"Error loading dataset class: {e}", "error")
+        sys.exit(1)
+    
+    # Instantiate dataset with base_path as benchmark_path
+    # Check if dataset class needs dataset_name parameter
+    import inspect
+    sig = inspect.signature(DatasetClass.__init__)
+    params = list(sig.parameters.keys())
+    
+    # Extract dataset name from class name (e.g., LIGHTNING_dataset -> "lightning")
+    dataset_name_from_class = DatasetClass.__name__.lower().replace('_dataset', '')
+    
+    if 'dataset_name' in params:
+        # LIGHTNING_dataset and similar classes
+        dataset = DatasetClass(benchmark_path=base_path, dataset_name=dataset_name_from_class)
+    else:
+        # Standard dataset classes - need to pass dataset_name as first arg
+        dataset = DatasetClass(dataset_name_from_class, base_path)
+    
+    # Override dataset_path to point to base_path directly for single sequence
+    # The sequence data is in base_path, not in base_path/DATASET_FOLDER
+    dataset.dataset_path = base_path
+    
+    # Get baseline
+    baseline = get_baseline(baseline_name)
+    baseline.check_installation()
+    
+    # Create a minimal experiment-like object
+    class SingleExperiment:
+        def __init__(self, folder, parameters=None):
+            self.folder = folder
+            self.parameters = parameters or {}
+            self.num_runs = 1
+            self.module = baseline_name
+    
+    # Detect streamlit structure: image_0/, sequences/, poses/, config.yaml
+    image_0_path = base_path / "image_0"
+    sequences_path = base_path / "sequences"
+    poses_path = base_path / "poses"
+    config_yaml_path = base_path / "config.yaml"
+    
+    is_streamlit_structure = (image_0_path.exists() and sequences_path.exists() and 
+                              poses_path.exists() and config_yaml_path.exists())
+    
+    # Create sequence folder structure that baseline expects
+    sequence_path = base_path / sequence_name
+    sequence_path.mkdir(parents=True, exist_ok=True)
+    
+    # Set exp.folder to base_path, and override dataset_folder to empty
+    exp_folder_base = base_path
+    
+    # Enable GUI for demo-single mode (opposite of eval-metrics-single)
+    exp_parameters = {"mode": sensor_type}  # GUI enabled by default when not explicitly disabled
+    exp = SingleExperiment(folder=str(exp_folder_base), parameters=exp_parameters)
+    
+    # The baseline constructs exp_folder as: exp.folder / dataset.dataset_folder / sequence_name
+    # We want: base_path / sequence_name
+    # So we need to set exp.folder = base_path and dataset.dataset_folder = "" 
+    original_dataset_folder = dataset.dataset_folder
+    dataset.dataset_folder = ""  # Empty so path becomes base_path/sequence_name instead of base_path/LIGHTNING/sequence_name
+    
+    # Handle streamlit structure (same as eval_metrics_single)
+    if is_streamlit_structure:
+        print_msg(f"{SCRIPT_LABEL}", f"Detected streamlit structure, converting files...")
+        
+        # Find sequence folder in sequences/ (might be different from config name)
+        sequence_folders = [f.name for f in sequences_path.iterdir() if f.is_dir()]
+        if sequence_folders:
+            actual_sequence_name = sequence_folders[0]  # Use first found sequence folder
+            times_txt = sequences_path / actual_sequence_name / "times.txt"
+            poses_txt = poses_path / f"{actual_sequence_name}.txt"
+        else:
+            # Fallback: try using sequence_name from config
+            times_txt = sequences_path / sequence_name / "times.txt"
+            poses_txt = poses_path / f"{sequence_name}.txt"
+        
+        # Create rgb_0 folder and copy/link images
+        rgb_0_path = sequence_path / "rgb_0"
+        if not rgb_0_path.exists():
+            rgb_0_path.mkdir(parents=True, exist_ok=True)
+            # Copy images from image_0 to rgb_0
+            if image_0_path.exists():
+                for img_file in image_0_path.iterdir():
+                    if img_file.is_file() and img_file.suffix.lower() in ['.png', '.jpg', '.jpeg']:
+                        shutil.copy2(img_file, rgb_0_path / img_file.name)
+        
+        # Create rgb.csv from image_0 and times.txt
+        if times_txt.exists() and rgb_0_path.exists():
+            rgb_csv = sequence_path / "rgb.csv"
+            times = []
+            with open(times_txt, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        times.append(float(line))
+            
+            # Collect and sort image filenames
+            rgb_files = sorted([f.name for f in rgb_0_path.iterdir() 
+                              if f.is_file() and f.suffix.lower() in ['.png', '.jpg', '.jpeg']])
+            
+            # Write CSV
+            with open(rgb_csv, 'w', newline='') as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow(['ts_rgb0 (s)', 'path_rgb0'])
+                for t, fname in zip(times, rgb_files):
+                    writer.writerow([f"{t:.6f}", f"rgb_0/{fname}"])
+            print_msg(f"{ws(4)}", f"Created rgb.csv from {len(rgb_files)} images")
+        
+        # Create calibration.yaml from config.yaml using proper OpenCV FileStorage format
+        if config_yaml_path.exists():
+            calibration_yaml = sequence_path / "calibration.yaml"
+            # Try to load and convert config.yaml
+            try:
+                with open(config_yaml_path, 'r') as f:
+                    config_data = yaml.safe_load(f)
+                
+                # Extract camera parameters from config.yaml
+                # Handle both nested Camera dict and flat Camera.fx format
+                if 'Camera' in config_data:
+                    cam_data = config_data['Camera']
+                else:
+                    # Try flat format like Camera.fx
+                    cam_data = {}
+                    for key, value in config_data.items():
+                        if key.startswith('Camera.'):
+                            cam_data[key.replace('Camera.', '')] = value
+                
+                # Convert to VSLAM-LAB calibration format
+                camera0 = {
+                    "model": "OPENCV",
+                    "fx": float(cam_data.get('fx', config_data.get('Camera.fx', 1446.91))),
+                    "fy": float(cam_data.get('fy', config_data.get('Camera.fy', 1451.58))),
+                    "cx": float(cam_data.get('cx', config_data.get('Camera.cx', 964.94))),
+                    "cy": float(cam_data.get('cy', config_data.get('Camera.cy', 607.07))),
+                    "k1": float(cam_data.get('k1', config_data.get('Camera.k1', -0.139))),
+                    "k2": float(cam_data.get('k2', config_data.get('Camera.k2', 0.237))),
+                    "p1": float(cam_data.get('p1', config_data.get('Camera.p1', -0.00064))),
+                    "p2": float(cam_data.get('p2', config_data.get('Camera.p2', 0.00071))),
+                    "k3": float(cam_data.get('k3', config_data.get('Camera.k3', -0.273)))
+                }
+                
+                # Use dataset's write_calibration_yaml method to create proper OpenCV FileStorage format
+                dataset.write_calibration_yaml(sequence_name=sequence_name, camera0=camera0)
+                print_msg(f"{ws(4)}", f"Created calibration.yaml from config.yaml using OpenCV FileStorage format")
+            except Exception as e:
+                print_msg(f"{ws(4)}", f"Error creating calibration.yaml: {e}", "error")
+                # Try to use dataset's method with defaults
+                try:
+                    camera0 = {
+                        "model": "OPENCV",
+                        "fx": 1446.91, "fy": 1451.58, "cx": 964.94, "cy": 607.07,
+                        "k1": -0.139, "k2": 0.237, "p1": -0.00064, "p2": 0.00071, "k3": -0.273
+                    }
+                    dataset.write_calibration_yaml(sequence_name=sequence_name, camera0=camera0)
+                    print_msg(f"{ws(4)}", f"Created calibration.yaml with default parameters")
+                except Exception as e2:
+                    print_msg(f"{ws(4)}", f"Failed to create calibration.yaml: {e2}", "error")
+                    sys.exit(1)
+        
+        # Create groundtruth.csv from poses/{sequence_name}.txt and times.txt
+        if poses_txt.exists() and times_txt.exists():
+            groundtruth_csv = sequence_path / GROUNTRUTH_FILE
+            times = []
+            with open(times_txt, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        times.append(float(line))
+            
+            with open(poses_txt, 'r') as src, open(groundtruth_csv, 'w', newline='') as dst:
+                writer = csv.writer(dst)
+                writer.writerow(['ts', 'tx', 'ty', 'tz', 'qx', 'qy', 'qz', 'qw'])
+                
+                for idx, line in enumerate(src):
+                    if idx >= len(times):
+                        break
+                    vals = list(map(float, line.strip().split()))
+                    # row-major 3x4: r00 r01 r02 tx r10 r11 r12 ty r20 r21 r22 tz
+                    Rm = np.array([[vals[0], vals[1], vals[2]],
+                                [vals[4], vals[5], vals[6]],
+                                [vals[8], vals[9], vals[10]]], dtype=float)
+                    tx, ty, tz = vals[3], vals[7], vals[11]
+                    qx, qy, qz, qw = R.from_matrix(Rm).as_quat()  # [x, y, z, w]
+                    ts = times[idx]
+                    writer.writerow([f"{ts:.6f}", tx, ty, tz, qx, qy, qz, qw])
+            print_msg(f"{ws(4)}", f"Created groundtruth.csv from poses and times")
+    
+    # Standard structure: look for existing files
+    rgb_csv = sequence_path / "rgb.csv"
+    if not rgb_csv.exists():
+        rgb_csv = sequence_path / "rgb_0.csv"
+    
+    if not rgb_csv.exists():
+        print_msg(SCRIPT_LABEL, f"Error: rgb.csv not found in {sequence_path}", "error")
+        sys.exit(1)
+    
+    # Run SLAM with GUI enabled using run_sequence()
+    print_msg(f"\n{SCRIPT_LABEL}", f"Running SLAM with GUI: {baseline.label} on {sequence_name}")
+    exp_it = 0
+    
+    # Use run_sequence() which handles the full pipeline (creates rgb_exp.csv, copies groundtruth, etc.)
+    # This is different from eval_metrics_single which calls baseline.execute() directly
+    results = run_sequence(exp_it, exp, baseline, dataset, sequence_name)
+    
+    print_msg(f"\n{SCRIPT_LABEL}", f"SLAM execution complete!")
+    if results.get('success', False):
+        print_msg(f"{ws(4)}", f"Success: {results.get('comments', 'N/A')}")
+    else:
+        print_msg(f"{ws(4)}", f"Failed: {results.get('comments', 'N/A')}", "error")
+
 def _generate_simple_pdf_report(trajectory_file, groundtruth_file, evaluation_folder, 
                                 sequence_name, baseline_name, output_pdf):
     """Generate a simple PDF report with trajectory plots for a single sequence."""
@@ -1025,6 +1278,14 @@ def _generate_simple_pdf_report(trajectory_file, groundtruth_file, evaluation_fo
         ax.axis('equal')
         
         pdf.savefig(fig, bbox_inches='tight')
+        
+        # Also save as PNG in the same directory
+        try:
+            png_path = Path(output_pdf).parent / "trajectory_2d.png"
+            fig.savefig(str(png_path), dpi=300, bbox_inches='tight')
+        except Exception as e:
+            print(f"Warning: Could not save trajectory PNG: {e}")
+            
         plt.close(fig)
         
         # Page 2: Metrics Summary

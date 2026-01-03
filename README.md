@@ -146,6 +146,7 @@ pixi run evaluate-exp <exp_yaml>                         # Example: pixi run eva
 pixi run compare-exp <exp_yaml>                          # Example: pixi run compare-exp configs/exp_vslamlab.yaml
 pixi run eval-metrics <exp_yaml>                         # Example: pixi run eval-metrics configs/exp_vslamlab.yaml
 pixi run eval-metrics-single <config_yaml>              # Example: pixi run eval-metrics-single configs/single_lightning.yaml
+pixi run demo-single <config_yaml>                      # Example: pixi run demo-single configs/single_lightning.yaml
 
 ```
 
@@ -281,6 +282,61 @@ This will:
 - Generate `metrics.json`, trajectory CSV, and PDF report
 
 **Note:** The command automatically suppresses GUI output when running SLAM, making it suitable for headless environments and batch processing.
+
+### demo-single Command
+
+The `demo-single` command runs SLAM with live GUI enabled for a single sequence from a custom dataset location. This is useful when you have data in a non-standard location and want to run SLAM interactively with visual feedback, similar to `pixi run demo` but using the single-config format.
+
+**Usage:**
+```bash
+pixi run demo-single <config_yaml>
+```
+
+**Configuration File Format:**
+
+Uses the same YAML format as `eval-metrics-single` (e.g., `configs/single_lightning.yaml`):
+```yaml
+DATASET:
+  base_path: /tmp/lightning_pyslam_streamlit/streamlit_pyslam__n8xj0c4
+  name: sequence_6a933071
+  baseline: mast3rslam
+  groundtruth_format: kitti
+  output_dir: output
+  sensor_type: mono
+  dataset: /home/yashturkar/Workspace/VSLAM-LAB/Datasets/dataset_lightning.py
+```
+
+**Parameters:**
+- `base_path`: Path to the directory containing your sequence data
+- `name`: Name of the sequence to run
+- `baseline`: SLAM baseline to use (e.g., `mast3rslam`, `orbslam2`, `droidslam`)
+- `groundtruth_format`: Format of groundtruth poses (`kitti` or `tum`)
+- `output_dir`: Subdirectory name where results will be saved (relative to `base_path`)
+- `sensor_type`: Sensor type (`mono`, `rgbd`, `stereo`, etc.)
+- `dataset`: Path to the Python file containing the dataset class definition
+
+**What it does:**
+1. Loads the dataset class dynamically from the specified Python file
+2. Detects and converts non-standard file structures (e.g., Streamlit format) to VSLAM-LAB format
+3. Runs SLAM on the sequence **with GUI enabled** (unlike `eval-metrics-single` which is headless)
+4. Saves trajectory files to the experiment folder
+
+**Key Differences from `eval-metrics-single`:**
+- **GUI Enabled**: Runs with live visual feedback (windows, visualizations, etc.)
+- **No Evaluation**: Does not run trajectory evaluation or generate metrics
+- **Interactive**: Suitable for debugging and interactive exploration
+
+**Example:**
+```bash
+pixi run demo-single configs/single_lightning.yaml
+```
+
+This will:
+- Run SLAM on the sequence at `/tmp/lightning_pyslam_streamlit/streamlit_pyslam__n8xj0c4`
+- Display GUI windows showing SLAM progress
+- Save trajectory files to the experiment folder
+
+**Note:** Unlike `eval-metrics-single`, this command runs with GUI enabled, making it suitable for interactive use and debugging. For headless batch processing and metrics generation, use `eval-metrics-single` instead.
 
 ```
 
