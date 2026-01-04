@@ -229,6 +229,7 @@ def generate_metrics_json(exp, dataset, sequence_name, exp_it, status="SUCCESS")
         "ate": None,
         "trajectory_length": None,
         "length_ratio": None,
+        "weighted_rmse": None,
         "timestamp": datetime.now().isoformat()
     }
     
@@ -274,6 +275,11 @@ def generate_metrics_json(exp, dataset, sequence_name, exp_it, status="SUCCESS")
             metrics["trajectory_length"] = trajectory_metrics["trajectory_length"]
         if "length_ratio" in trajectory_metrics:
             metrics["length_ratio"] = trajectory_metrics["length_ratio"]
+    
+    # Calculate weighted_rmse = RMSE / C^2 where C is coverage (length_ratio)
+    if metrics["rmse"]["translation"] is not None and metrics["length_ratio"] is not None:
+        if metrics["length_ratio"] > 0:
+            metrics["weighted_rmse"] = float(metrics["rmse"]["translation"] / (metrics["length_ratio"] ** 2))
     
     # Final check: if we have any meaningful metrics, mark as SUCCESS
     if metrics["ate"] is not None or metrics["rmse"]["translation"] is not None:

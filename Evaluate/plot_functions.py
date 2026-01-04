@@ -18,6 +18,7 @@ Functions included:
 """
 
 import glob
+import json
 import math
 import os
 import random
@@ -1526,7 +1527,66 @@ def _create_title_page(fig, experiments, dataset_sequences, exp_names):
         y_pos -= 0.03
 
 
-def _create_summary_page(fig, accuracies, dataset_sequences, exp_names, dataset_nicknames):
+def _get_weighted_rmse(experiments, exp_name, dataset_name, sequence_name, rmse_value):
+    """
+    Get weighted RMSE from metrics.json or compute it if needed.
+    
+    Args:
+        experiments: Dictionary of experiments
+        exp_name: Name of the experiment
+        dataset_name: Name of the dataset
+        sequence_name: Name of the sequence
+        rmse_value: RMSE value (for computation fallback)
+        
+    Returns:
+        Weighted RMSE value or None if unavailable
+    """
+    if exp_name not in experiments:
+        return None
+    
+    exp = experiments[exp_name]
+    metrics_json_path = os.path.join(
+        exp.folder, 
+        dataset_name.upper(), 
+        sequence_name, 
+        VSLAM_LAB_EVALUATION_FOLDER, 
+        'metrics.json'
+    )
+    
+    # Try to read from metrics.json
+    if os.path.exists(metrics_json_path):
+        try:
+            with open(metrics_json_path, 'r') as f:
+                metrics = json.load(f)
+                
+            # First try to get weighted_rmse directly
+            if 'weighted_rmse' in metrics and metrics['weighted_rmse'] is not None:
+                return float(metrics['weighted_rmse'])
+            
+            # If not available, try to compute it
+            rmse_translation = None
+            length_ratio = None
+            
+            if 'rmse' in metrics and isinstance(metrics['rmse'], dict):
+                rmse_translation = metrics['rmse'].get('translation')
+            elif 'ate' in metrics and isinstance(metrics['ate'], dict):
+                rmse_translation = metrics['ate'].get('rmse')
+            
+            if 'length_ratio' in metrics:
+                length_ratio = metrics['length_ratio']
+            
+            # Compute weighted_rmse = RMSE / (length_ratio^2)
+            if rmse_translation is not None and length_ratio is not None and length_ratio > 0:
+                return float(rmse_translation / (length_ratio ** 2))
+                
+        except (json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
+            # If reading fails, return None
+            pass
+    
+    return None
+
+
+def _create_summary_page(fig, accuracies, dataset_sequences, exp_names, dataset_nicknames, experiments):
     """Create executive summary page with key metrics."""
     fig.clear()
     ax = fig.add_subplot(111)
@@ -1538,7 +1598,9 @@ def _create_summary_page(fig, accuracies, dataset_sequences, exp_names, dataset_
     
     # Collect all metrics
     all_rmse = []
+    all_weighted_rmse = []
     sequence_rmse = {}
+    sequence_weighted_rmse = {}
     total_sequences = 0
     successful_runs = 0
     
@@ -1556,6 +1618,14 @@ def _create_summary_page(fig, accuracies, dataset_sequences, exp_names, dataset_
                         if seq_key not in sequence_rmse:
                             sequence_rmse[seq_key] = []
                         sequence_rmse[seq_key].append(avg_rmse)
+                        
+                        # Get weighted RMSE
+                        weighted_rmse = _get_weighted_rmse(experiments, exp_name, dataset_name, sequence_name, avg_rmse)
+                        if weighted_rmse is not None:
+                            all_weighted_rmse.append(weighted_rmse)
+                            if seq_key not in sequence_weighted_rmse:
+                                sequence_weighted_rmse[seq_key] = []
+                            sequence_weighted_rmse[seq_key].append(weighted_rmse)
     
     y_pos = 0.80
     ax.text(0.1, y_pos, 'Overall Statistics', 
@@ -1579,6 +1649,18 @@ def _create_summary_page(fig, accuracies, dataset_sequences, exp_names, dataset_
         min_rmse = np.min(all_rmse)
         max_rmse = np.max(all_rmse)
         ax.text(0.1, y_pos, f'RMSE Range: {min_rmse:.4f} m - {max_rmse:.4f} m', 
+                ha='left', va='top', fontsize=11)
+    
+    if len(all_weighted_rmse) > 0:
+        y_pos -= 0.05
+        avg_weighted_rmse = np.mean(all_weighted_rmse)
+        ax.text(0.1, y_pos, f'Average Weighted RMSE: {avg_weighted_rmse:.4f} m', 
+                ha='left', va='top', fontsize=11)
+        
+        y_pos -= 0.05
+        min_weighted_rmse = np.min(all_weighted_rmse)
+        max_weighted_rmse = np.max(all_weighted_rmse)
+        ax.text(0.1, y_pos, f'Weighted RMSE Range: {min_weighted_rmse:.4f} m - {max_weighted_rmse:.4f} m', 
                 ha='left', va='top', fontsize=11)
     
     # Best/worst sequences
@@ -1609,7 +1691,7 @@ def _create_summary_page(fig, accuracies, dataset_sequences, exp_names, dataset_
                     ha='left', va='top', fontsize=11, color='blue')
 
 
-def _create_metrics_table_page(fig, accuracies, dataset_sequences, exp_names, dataset_nicknames):
+def _create_metrics_table_page(fig, accuracies, dataset_sequences, exp_names, dataset_nicknames, experiments):
     """Create detailed metrics table page."""
     fig.clear()
     ax = fig.add_subplot(111)
@@ -1621,7 +1703,7 @@ def _create_metrics_table_page(fig, accuracies, dataset_sequences, exp_names, da
     
     # Build table data
     table_data = []
-    headers = ['Sequence', 'Experiment', 'RMSE (m)', 'Mean (m)', 'Median (m)', 
+    headers = ['Sequence', 'Experiment', 'RMSE (m)', 'Weighted RMSE (m)', 'Mean (m)', 'Median (m)', 
                'Std (m)', 'Min (m)', 'Max (m)', 'Tracked', 'Evaluated']
     
     for dataset_name, sequence_names in dataset_sequences.items():
@@ -1631,10 +1713,15 @@ def _create_metrics_table_page(fig, accuracies, dataset_sequences, exp_names, da
                 if not accuracies[dataset_name][sequence_name][exp_name].empty:
                     df = accuracies[dataset_name][sequence_name][exp_name]
                     if len(df) > 0:
+                        rmse_val = df['rmse'].iloc[0]
+                        weighted_rmse = _get_weighted_rmse(experiments, exp_name, dataset_name, sequence_name, rmse_val)
+                        weighted_rmse_str = f"{weighted_rmse:.4f}" if weighted_rmse is not None else "N/A"
+                        
                         row = [
                             seq_nickname,
                             exp_name,
-                            f"{df['rmse'].iloc[0]:.4f}",
+                            f"{rmse_val:.4f}",
+                            weighted_rmse_str,
                             f"{df['mean'].iloc[0]:.4f}",
                             f"{df['median'].iloc[0]:.4f}",
                             f"{df['std'].iloc[0]:.4f}",
@@ -1690,9 +1777,14 @@ def _create_per_sequence_page(fig, sequence_name, seq_nickname, accuracies,
         if not accuracies[dataset_name][sequence_name][exp_name].empty:
             df = accuracies[dataset_name][sequence_name][exp_name]
             if len(df) > 0:
+                rmse_val = df['rmse'].iloc[0]
+                weighted_rmse = _get_weighted_rmse(experiments, exp_name, dataset_name, sequence_name, rmse_val)
+                weighted_rmse_str = f"{weighted_rmse:.4f}" if weighted_rmse is not None else "N/A"
+                
                 table_data = [
                     ['Metric', 'Value'],
-                    ['RMSE (m)', f"{df['rmse'].iloc[0]:.4f}"],
+                    ['RMSE (m)', f"{rmse_val:.4f}"],
+                    ['Weighted RMSE (m)', weighted_rmse_str],
                     ['Mean Error (m)', f"{df['mean'].iloc[0]:.4f}"],
                     ['Median Error (m)', f"{df['median'].iloc[0]:.4f}"],
                     ['Std Deviation (m)', f"{df['std'].iloc[0]:.4f}"],
@@ -1756,13 +1848,13 @@ def generate_comprehensive_report(experiments, dataset_sequences, accuracies,
         
         # Page 2: Executive Summary
         fig = plt.figure(figsize=(8.5, 11))
-        _create_summary_page(fig, accuracies, dataset_sequences, exp_names, dataset_nicknames)
+        _create_summary_page(fig, accuracies, dataset_sequences, exp_names, dataset_nicknames, experiments)
         pdf.savefig(fig, bbox_inches='tight')
         plt.close(fig)
         
         # Page 3: Metrics Table
         fig = plt.figure(figsize=(11, 8.5))
-        _create_metrics_table_page(fig, accuracies, dataset_sequences, exp_names, dataset_nicknames)
+        _create_metrics_table_page(fig, accuracies, dataset_sequences, exp_names, dataset_nicknames, experiments)
         pdf.savefig(fig, bbox_inches='tight')
         plt.close(fig)
         
