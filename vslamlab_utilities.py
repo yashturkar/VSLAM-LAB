@@ -633,6 +633,9 @@ def eval_metrics_single(config_yaml: str | Path) -> None:
     
     # Disable GUI for eval-metrics-single mode
     exp_parameters = {"mode": sensor_type, "gui": False, "headless": True, "show_gui": False}
+    # Force headless for baselines that pop GUI windows when verbose=1
+    if baseline_name in ("droidslam", "droidslam-dev", "dpvo", "dpvo-dev", "orbslam2", "orbslam2-dev"):
+        exp_parameters["verbose"] = 0
     exp = SingleExperiment(folder=str(exp_folder_base), parameters=exp_parameters)
     
     # The baseline constructs exp_folder as: exp.folder / dataset.dataset_folder / sequence_name
@@ -808,7 +811,12 @@ def eval_metrics_single(config_yaml: str | Path) -> None:
     # Disable GUI by setting DISPLAY environment variable to empty
     # This prevents GUI windows from opening in eval-metrics-single mode
     original_display = os.environ.get('DISPLAY', None)
+    original_qt_qpa_platform = os.environ.get('QT_QPA_PLATFORM', None)
+    original_pangolin_uri = os.environ.get('PANGOLIN_WINDOW_URI', None)
     os.environ['DISPLAY'] = ''
+    os.environ['QT_QPA_PLATFORM'] = 'offscreen'
+    # Pangolin viewers (dpvo/orbslam2) respect this URI; headless avoids X11
+    os.environ['PANGOLIN_WINDOW_URI'] = 'headless://'
     
     try:
         exec_command = baseline.build_execute_command(exp_it, exp, dataset, sequence_name)
@@ -851,6 +859,16 @@ def eval_metrics_single(config_yaml: str | Path) -> None:
             os.environ['DISPLAY'] = original_display
         elif 'DISPLAY' in os.environ:
             del os.environ['DISPLAY']
+
+        if original_qt_qpa_platform is not None:
+            os.environ['QT_QPA_PLATFORM'] = original_qt_qpa_platform
+        elif 'QT_QPA_PLATFORM' in os.environ:
+            del os.environ['QT_QPA_PLATFORM']
+
+        if original_pangolin_uri is not None:
+            os.environ['PANGOLIN_WINDOW_URI'] = original_pangolin_uri
+        elif 'PANGOLIN_WINDOW_URI' in os.environ:
+            del os.environ['PANGOLIN_WINDOW_URI']
     
     # Check for trajectory files - baseline may save TXT instead of CSV
     # Convert TXT to CSV if needed before checking success
