@@ -1,0 +1,25 @@
+DATASET:
+  dataset: /home/yashturkar/Workspace/VSLAM-LAB/Datasets/dataset_lightning.py
+  base_path: /home/yashturkar/Workspace/VSLAM-LAB-Benchmark/LIGHTNING
+  sensor_type: mono
+  groundtruth_format: kitti
+  output_root: /home/yashturkar/Workspace/VSLAM-LAB-Evaluation/eval_baselines
+
+BASELINES:
+  - mast3rslam
+
+SEQUENCES:
+  - name: 101backdoor_p0.0_extract
+  - name: 101backdoor_p1.0_extract
+  - name: 101out_p0.0_extract
+  - name: 101out_p1.0_extract
+  - name: 113through_p0.0_extract
+  - name: 113through_p1.0_extract
+  - name: lab2113_p0.0_extract
+  - name: lab2113_p1.0_extract
+  - name: labin_p0.0_extract
+  - name: labin_p1.0_extract
+  - name: tunnelin_p0.0_extract
+  - name: tunnelin_p1.0_extract
+  - name: tunnelout_p0.0_extract
+  - name: tunnelout_p1.0_extract
