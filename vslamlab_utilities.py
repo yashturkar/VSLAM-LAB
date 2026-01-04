@@ -1,4 +1,4 @@
-import sys, os, yaml, shutil, csv, time
+import sys, os, yaml, shutil, csv, time, tempfile
 import pandas as pd
 import importlib.util
 import numpy as np
@@ -236,6 +236,166 @@ def eval_metrics(exp_yaml: str | Path) -> None:
                                 print_msg(f"{ws(4)}", f"Generated: {metrics_json_path}", verb='LOW')
                         except Exception as e:
                             print_msg(f"{ws(4)}", f"Error generating metrics.json for {sequence_name} (exp_it={exp_it}): {e}", "error")
+
+##################################################################################################################################################
+# eval_baselines
+##################################################################################################################################################
+##################################################################################################################################################
+def eval_baselines(config_yaml: str | Path) -> None:
+    """
+    Batch version of eval-metrics-single for multiple sequences and baselines.
+
+    Config format:
+    DATASET:                      # defaults applied to all sequences
+      dataset: /path/to/dataset_lightning.py
+      base_path: /path/to/VSLAM-LAB-Benchmark/LIGHTNING
+      sensor_type: mono
+      groundtruth_format: kitti
+      output_root: /path/to/output/root          # optional, defaults to VSLAM-LAB-Evaluation/eval_baselines
+    BASELINES:
+      - mast3rslam
+      - dpvo
+    SEQUENCES:
+      - name: 101backdoor_p0.0_extract
+      - name: 101backdoor_p1.0_extract
+    """
+    print_msg(f"\n{SCRIPT_LABEL}", f"Processing eval-baselines config: {config_yaml}")
+
+    config_data = load_yaml_file(config_yaml)
+    dataset_defaults = config_data.get("DATASET", {})
+    baselines = config_data.get("BASELINES") or config_data.get("baselines")
+    sequences = config_data.get("SEQUENCES") or config_data.get("sequences")
+
+    if not baselines:
+        print_msg(SCRIPT_LABEL, "Error: BASELINES list is required", "error")
+        sys.exit(1)
+
+    if not sequences:
+        print_msg(SCRIPT_LABEL, "Error: SEQUENCES list is required", "error")
+        sys.exit(1)
+
+    dataset_file = dataset_defaults.get("dataset")
+    if not dataset_file:
+        print_msg(SCRIPT_LABEL, "Error: DATASET.dataset must point to the dataset Python file", "error")
+        sys.exit(1)
+
+    dataset_file = Path(dataset_file)
+    if not dataset_file.exists():
+        print_msg(SCRIPT_LABEL, f"Error: dataset file not found: {dataset_file}", "error")
+        sys.exit(1)
+
+    # Resolve default base path (where prepared sequences live)
+    default_base_path = dataset_defaults.get("base_path")
+    if default_base_path is None:
+        dataset_stem = dataset_file.stem.replace("dataset_", "").upper()
+        guessed_base_path = VSLAMLAB_BENCHMARK / dataset_stem
+        if guessed_base_path.exists():
+            default_base_path = guessed_base_path
+
+    if default_base_path is None:
+        print_msg(SCRIPT_LABEL, "Error: base_path is missing and could not be inferred", "error")
+        sys.exit(1)
+
+    default_base_path = Path(default_base_path)
+    if not default_base_path.exists():
+        print_msg(SCRIPT_LABEL, f"Error: base_path does not exist: {default_base_path}", "error")
+        sys.exit(1)
+
+    default_sensor_type = dataset_defaults.get("sensor_type", "mono")
+    default_groundtruth = dataset_defaults.get("groundtruth_format", "kitti")
+    output_root = Path(dataset_defaults.get("output_root", VSLAMLAB_EVALUATION / "eval_baselines"))
+    output_root.mkdir(parents=True, exist_ok=True)
+
+    temp_config_dir = Path(tempfile.mkdtemp(prefix="eval_baselines_", dir=Path(VSLAM_LAB_DIR)))
+    run_summaries = []
+
+    try:
+        for baseline_name in baselines:
+            for seq_entry in sequences:
+                if isinstance(seq_entry, str):
+                    seq_cfg = {"name": seq_entry}
+                elif isinstance(seq_entry, dict):
+                    seq_cfg = seq_entry
+                else:
+                    print_msg(f"{ws(4)}", f"Skipping unsupported sequence entry: {seq_entry}", "warning")
+                    continue
+
+                sequence_name = seq_cfg.get("name")
+                if not sequence_name:
+                    print_msg(f"{ws(4)}", "Skipping sequence without a name", "warning")
+                    continue
+
+                base_path = Path(seq_cfg.get("base_path", default_base_path))
+                if not base_path.exists():
+                    print_msg(f"{ws(4)}", f"Skipping {sequence_name}: base_path not found ({base_path})", "warning")
+                    run_summaries.append(
+                        {"baseline": baseline_name, "sequence": sequence_name, "status": "FAILURE",
+                         "metrics": None, "comments": f"base_path missing: {base_path}"}
+                    )
+                    continue
+
+                output_dir = seq_cfg.get("output_dir")
+                if output_dir:
+                    output_dir = Path(output_dir)
+                else:
+                    output_dir = output_root / baseline_name / sequence_name
+                output_dir.mkdir(parents=True, exist_ok=True)
+
+                single_config = {
+                    "DATASET": {
+                        "base_path": str(base_path),
+                        "name": sequence_name,
+                        "baseline": baseline_name,
+                        "groundtruth_format": seq_cfg.get("groundtruth_format", default_groundtruth),
+                        "output_dir": str(output_dir),
+                        "sensor_type": seq_cfg.get("sensor_type", default_sensor_type),
+                        "dataset": str(Path(seq_cfg.get("dataset", dataset_file)))
+                    }
+                }
+
+                temp_config_path = temp_config_dir / f"{baseline_name}_{sequence_name}.yaml"
+                with open(temp_config_path, "w", encoding="utf-8") as f:
+                    yaml.safe_dump(single_config, f, default_flow_style=False)
+
+                print_msg(f"\n{ws(2)}", f"[{baseline_name}] {sequence_name}")
+                status = "SUCCESS"
+                comments = ""
+                try:
+                    eval_metrics_single(temp_config_path)
+                except SystemExit as e:
+                    status = "FAILURE"
+                    comments = f"eval_metrics_single exited with code {e.code}"
+                except Exception as e:
+                    status = "FAILURE"
+                    comments = str(e)
+
+                metrics_path = output_dir / "metrics.json"
+                metrics_exists = metrics_path.exists()
+                if status == "SUCCESS" and not metrics_exists:
+                    status = "FAILURE"
+                    comments = "metrics.json not produced"
+
+                run_summaries.append(
+                    {"baseline": baseline_name, "sequence": sequence_name, "status": status,
+                     "metrics": metrics_path if metrics_exists else None, "comments": comments}
+                )
+    finally:
+        if temp_config_dir.exists():
+            shutil.rmtree(temp_config_dir, ignore_errors=True)
+
+    # Summary
+    print_msg(f"\n{SCRIPT_LABEL}", "Eval-baselines summary")
+    for summary in run_summaries:
+        status = summary["status"]
+        seq = summary["sequence"]
+        base = summary["baseline"]
+        metrics = summary["metrics"]
+        comments = summary["comments"]
+        if metrics:
+            print_msg(f"{ws(2)}", f"{base} / {seq}: {status} (metrics: {metrics})")
+        else:
+            extra = f" - {comments}" if comments else ""
+            print_msg(f"{ws(2)}", f"{base} / {seq}: {status}{extra}", "warning" if status != "SUCCESS" else "info")
 
 ##################################################################################################################################################
 # eval_metrics_single
@@ -1610,7 +1770,12 @@ def update_experiment_csv_log(exp_name: str, settings: Any) -> bool:
     baseline_name = settings.get('Module')
     all_match = exp_log["method_name"].eq(baseline_name).all()
     if not all_match:
-        print_msg(f"{SCRIPT_LABEL}", f"The original method cannot be changed ({(exp_log["method_name"][0])} != {baseline_name}). Only new sequences or more runs can be added to the experiment.",'error')
+        original_method = exp_log["method_name"][0]
+        print_msg(
+            f"{SCRIPT_LABEL}",
+            f"The original method cannot be changed ({original_method} != {baseline_name}). Only new sequences or more runs can be added to the experiment.",
+            "error"
+        )
         exit(1)
 
     config_yaml = settings.get('Config')

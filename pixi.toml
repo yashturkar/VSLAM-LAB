@@ -82,6 +82,11 @@ eval-metrics-single.args = [
   { "arg" = "config_yaml", "default" = "configs/single_lightning.yaml" }
 ]
 
+eval-baselines.cmd = "python vslamlab_gui.py eval_baselines {{ config_yaml }}"
+eval-baselines.args = [
+  { "arg" = "config_yaml", "default" = "configs/eval_baselines_lightning.yaml" }
+]
+
 demo-single.cmd = "python vslamlab_gui.py demo_single {{ config_yaml }}"
 demo-single.args = [
   { "arg" = "config_yaml", "default" = "configs/single_lightning.yaml" }
@@ -940,6 +945,7 @@ torchvision = "*"
 pytorch_scatter = "*"
 numpy = "*"
 opencv = "*"
+<<<<<<< HEAD
 
 yq = "*"
 pandas = "*"
@@ -965,3 +971,9 @@ einops = "*"
 pyproj = ">=3.7.1,<4"
 psutil = "*"
 timm = ">=1.0.15,<2"
+=======
+libtorch = "*"
+librealsense = "*"
+openmp = "*"
+libgfortran = "3.*"
+>>>>>>> bdc7a57 (feat: Add eval_baselines function and configuration for batch evaluation of multiple sequences and baselines)
