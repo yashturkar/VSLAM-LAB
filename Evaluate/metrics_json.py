@@ -153,7 +153,7 @@ def compute_trajectory_metrics(evaluation_folder, exp_it, groundtruth_csv):
         groundtruth_csv: Path to ground truth CSV file
         
     Returns:
-        dict with trajectory_length and length_ratio
+        dict with trajectory_length and length_ratio (capped at 1.0 when predicted > ground truth)
     """
     traj_name = f"{exp_it}_{TRAJECTORY_FILE_NAME}.tum"
     traj_tum = os.path.join(evaluation_folder, traj_name)
@@ -182,7 +182,8 @@ def compute_trajectory_metrics(evaluation_folder, exp_it, groundtruth_csv):
     
     # Compute length ratio
     if trajectory_length is not None and gt_length is not None and gt_length > 0:
-        length_ratio = trajectory_length / gt_length
+        raw_ratio = trajectory_length / gt_length
+        length_ratio = min(1.0, raw_ratio)
     
     result = {}
     if trajectory_length is not None:
@@ -293,4 +294,3 @@ def generate_metrics_json(exp, dataset, sequence_name, exp_it, status="SUCCESS")
         json.dump(metrics, f, indent=2)
     
     return metrics_json_path
-
