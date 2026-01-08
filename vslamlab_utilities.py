@@ -693,12 +693,14 @@ def eval_metrics_single(config_yaml: str | Path) -> None:
             rgb_files = sorted([f.name for f in rgb_0_path.iterdir() 
                               if f.is_file() and f.suffix.lower() in ['.png', '.jpg', '.jpeg']])
             
-            # Write CSV
+            # Write CSV with timestamps in nanoseconds for mast3rslam compatibility
             with open(rgb_csv, 'w', newline='') as csvfile:
                 writer = csv.writer(csvfile)
-                writer.writerow(['ts_rgb0 (s)', 'path_rgb0'])
+                writer.writerow(['ts_rgb_0 (ns)', 'path_rgb_0'])
                 for t, fname in zip(times, rgb_files):
-                    writer.writerow([f"{t:.6f}", f"rgb_0/{fname}"])
+                    # Convert seconds to nanoseconds
+                    ts_ns = int(t * 1e9)
+                    writer.writerow([ts_ns, f"rgb_0/{fname}"])
             print_msg(f"{ws(4)}", f"Created rgb.csv from {len(rgb_files)} images")
         
         # Create calibration.yaml from config.yaml using proper OpenCV FileStorage format
@@ -721,32 +723,49 @@ def eval_metrics_single(config_yaml: str | Path) -> None:
                             cam_data[key.replace('Camera.', '')] = value
                 
                 # Convert to VSLAM-LAB calibration format
+                fx = float(cam_data.get('fx', config_data.get('Camera.fx', 1446.91)))
+                fy = float(cam_data.get('fy', config_data.get('Camera.fy', 1451.58)))
+                cx = float(cam_data.get('cx', config_data.get('Camera.cx', 964.94)))
+                cy = float(cam_data.get('cy', config_data.get('Camera.cy', 607.07)))
+                k1 = float(cam_data.get('k1', config_data.get('Camera.k1', -0.139)))
+                k2 = float(cam_data.get('k2', config_data.get('Camera.k2', 0.237)))
+                p1 = float(cam_data.get('p1', config_data.get('Camera.p1', -0.00064)))
+                p2 = float(cam_data.get('p2', config_data.get('Camera.p2', 0.00071)))
+                k3 = float(cam_data.get('k3', config_data.get('Camera.k3', -0.273)))
+                fps = float(cam_data.get('fps', config_data.get('Camera.fps', 5.0)))
+                
+                # Format expected by write_calibration_yaml / _get_rgb_yaml_section
+                # T_BS must be a numpy array (not list) because _get_rgb_yaml_section calls .flatten() on it
                 camera0 = {
-                    "model": "OPENCV",
-                    "fx": float(cam_data.get('fx', config_data.get('Camera.fx', 1446.91))),
-                    "fy": float(cam_data.get('fy', config_data.get('Camera.fy', 1451.58))),
-                    "cx": float(cam_data.get('cx', config_data.get('Camera.cx', 964.94))),
-                    "cy": float(cam_data.get('cy', config_data.get('Camera.cy', 607.07))),
-                    "k1": float(cam_data.get('k1', config_data.get('Camera.k1', -0.139))),
-                    "k2": float(cam_data.get('k2', config_data.get('Camera.k2', 0.237))),
-                    "p1": float(cam_data.get('p1', config_data.get('Camera.p1', -0.00064))),
-                    "p2": float(cam_data.get('p2', config_data.get('Camera.p2', 0.00071))),
-                    "k3": float(cam_data.get('k3', config_data.get('Camera.k3', -0.273)))
+                    "cam_name": "rgb_0",
+                    "cam_type": "mono",
+                    "cam_model": "OPENCV",
+                    "focal_length": [fx, fy],
+                    "principal_point": [cx, cy],
+                    "distortion_coefficients": [k1, k2, p1, p2, k3],
+                    "fps": fps,
+                    "T_BS": np.eye(4)  # Identity transform - must be numpy array for .flatten()
                 }
                 
                 # Use dataset's write_calibration_yaml method to create proper OpenCV FileStorage format
-                dataset.write_calibration_yaml(sequence_name=sequence_name, camera0=camera0)
+                dataset.write_calibration_yaml(sequence_name=sequence_name, rgb=[camera0])
                 print_msg(f"{ws(4)}", f"Created calibration.yaml from config.yaml using OpenCV FileStorage format")
             except Exception as e:
                 print_msg(f"{ws(4)}", f"Error creating calibration.yaml: {e}", "error")
                 # Try to use dataset's method with defaults
                 try:
+                    # np is already imported at module level
                     camera0 = {
-                        "model": "OPENCV",
-                        "fx": 1446.91, "fy": 1451.58, "cx": 964.94, "cy": 607.07,
-                        "k1": -0.139, "k2": 0.237, "p1": -0.00064, "p2": 0.00071, "k3": -0.273
+                        "cam_name": "rgb_0",
+                        "cam_type": "mono",
+                        "cam_model": "OPENCV",
+                        "focal_length": [1446.91, 1451.58],
+                        "principal_point": [964.94, 607.07],
+                        "distortion_coefficients": [-0.139, 0.237, -0.00064, 0.00071, -0.273],
+                        "fps": 5.0,
+                        "T_BS": np.eye(4)  # Identity transform - must be numpy array for .flatten()
                     }
-                    dataset.write_calibration_yaml(sequence_name=sequence_name, camera0=camera0)
+                    dataset.write_calibration_yaml(sequence_name=sequence_name, rgb=[camera0])
                     print_msg(f"{ws(4)}", f"Created calibration.yaml with default parameters")
                 except Exception as e2:
                     print_msg(f"{ws(4)}", f"Failed to create calibration.yaml: {e2}", "error")
@@ -764,7 +783,8 @@ def eval_metrics_single(config_yaml: str | Path) -> None:
             
             with open(poses_txt, 'r') as src, open(groundtruth_csv, 'w', newline='') as dst:
                 writer = csv.writer(dst)
-                writer.writerow(['ts', 'tx', 'ty', 'tz', 'qx', 'qy', 'qz', 'qw'])
+                # Use nanosecond timestamps to match trajectory output from SLAM baselines
+                writer.writerow(['ts (ns)', 'tx', 'ty', 'tz', 'qx', 'qy', 'qz', 'qw'])
                 
                 for idx, line in enumerate(src):
                     if idx >= len(times):
@@ -776,8 +796,9 @@ def eval_metrics_single(config_yaml: str | Path) -> None:
                                 [vals[8], vals[9], vals[10]]], dtype=float)
                     tx, ty, tz = vals[3], vals[7], vals[11]
                     qx, qy, qz, qw = R.from_matrix(Rm).as_quat()  # [x, y, z, w]
-                    ts = times[idx]
-                    writer.writerow([f"{ts:.6f}", tx, ty, tz, qx, qy, qz, qw])
+                    # Convert seconds to nanoseconds to match rgb.csv and trajectory output
+                    ts_ns = int(times[idx] * 1e9)
+                    writer.writerow([ts_ns, tx, ty, tz, qx, qy, qz, qw])
             print_msg(f"{ws(4)}", f"Created groundtruth.csv from poses and times")
     
     # Standard structure: look for existing files
@@ -847,6 +868,8 @@ def eval_metrics_single(config_yaml: str | Path) -> None:
         # exp_folder = os.path.join(exp.folder, dataset.dataset_folder, sequence_name)
         # = os.path.join(base_path, "", sequence_name) = base_path/sequence_name
         baseline_exp_folder = os.path.join(exp.folder, dataset.dataset_folder, sequence_name)
+        # Convert to Path object since BaselineVSLAMLab.execute() uses / operator
+        baseline_exp_folder = Path(baseline_exp_folder)
         results = baseline.execute(exec_command, exp_it, baseline_exp_folder)
         
         # Debug: Print execution results
@@ -1160,7 +1183,7 @@ def demo_single(config_yaml: str | Path) -> None:
     
     # Enable GUI for demo-single mode (opposite of eval-metrics-single)
     exp_parameters = {"mode": sensor_type}  # GUI enabled by default when not explicitly disabled
-    exp = SingleExperiment(folder=str(exp_folder_base), parameters=exp_parameters)
+    exp = SingleExperiment(folder=exp_folder_base, parameters=exp_parameters)
     
     # The baseline constructs exp_folder as: exp.folder / dataset.dataset_folder / sequence_name
     # We want: base_path / sequence_name
@@ -1207,12 +1230,14 @@ def demo_single(config_yaml: str | Path) -> None:
             rgb_files = sorted([f.name for f in rgb_0_path.iterdir() 
                               if f.is_file() and f.suffix.lower() in ['.png', '.jpg', '.jpeg']])
             
-            # Write CSV
+            # Write CSV with timestamps in nanoseconds for mast3rslam compatibility
             with open(rgb_csv, 'w', newline='') as csvfile:
                 writer = csv.writer(csvfile)
-                writer.writerow(['ts_rgb0 (s)', 'path_rgb0'])
+                writer.writerow(['ts_rgb_0 (ns)', 'path_rgb_0'])
                 for t, fname in zip(times, rgb_files):
-                    writer.writerow([f"{t:.6f}", f"rgb_0/{fname}"])
+                    # Convert seconds to nanoseconds
+                    ts_ns = int(t * 1e9)
+                    writer.writerow([ts_ns, f"rgb_0/{fname}"])
             print_msg(f"{ws(4)}", f"Created rgb.csv from {len(rgb_files)} images")
         
         # Create calibration.yaml from config.yaml using proper OpenCV FileStorage format
@@ -1234,33 +1259,49 @@ def demo_single(config_yaml: str | Path) -> None:
                         if key.startswith('Camera.'):
                             cam_data[key.replace('Camera.', '')] = value
                 
-                # Convert to VSLAM-LAB calibration format
+                # Convert to VSLAM-LAB calibration format (matches _get_rgb_yaml_section API)
+                fx = float(cam_data.get('fx', config_data.get('Camera.fx', 1446.91)))
+                fy = float(cam_data.get('fy', config_data.get('Camera.fy', 1451.58)))
+                cx = float(cam_data.get('cx', config_data.get('Camera.cx', 964.94)))
+                cy = float(cam_data.get('cy', config_data.get('Camera.cy', 607.07)))
+                k1 = float(cam_data.get('k1', config_data.get('Camera.k1', -0.139)))
+                k2 = float(cam_data.get('k2', config_data.get('Camera.k2', 0.237)))
+                p1 = float(cam_data.get('p1', config_data.get('Camera.p1', -0.00064)))
+                p2 = float(cam_data.get('p2', config_data.get('Camera.p2', 0.00071)))
+                k3 = float(cam_data.get('k3', config_data.get('Camera.k3', -0.273)))
+                fps = float(cam_data.get('fps', config_data.get('Camera.fps', 5.0)))
+                
                 camera0 = {
-                    "model": "OPENCV",
-                    "fx": float(cam_data.get('fx', config_data.get('Camera.fx', 1446.91))),
-                    "fy": float(cam_data.get('fy', config_data.get('Camera.fy', 1451.58))),
-                    "cx": float(cam_data.get('cx', config_data.get('Camera.cx', 964.94))),
-                    "cy": float(cam_data.get('cy', config_data.get('Camera.cy', 607.07))),
-                    "k1": float(cam_data.get('k1', config_data.get('Camera.k1', -0.139))),
-                    "k2": float(cam_data.get('k2', config_data.get('Camera.k2', 0.237))),
-                    "p1": float(cam_data.get('p1', config_data.get('Camera.p1', -0.00064))),
-                    "p2": float(cam_data.get('p2', config_data.get('Camera.p2', 0.00071))),
-                    "k3": float(cam_data.get('k3', config_data.get('Camera.k3', -0.273)))
+                    "cam_name": "rgb_0",
+                    "cam_type": "rgb",
+                    "cam_model": "radtan5",  # radial-tangential distortion model
+                    "distortion_type": "radtan5",
+                    "focal_length": [fx, fy],
+                    "principal_point": [cx, cy],
+                    "distortion_coefficients": [k1, k2, p1, p2, k3],
+                    "fps": fps,
+                    "T_BS": np.eye(4)  # Identity transform (camera at body frame origin)
                 }
                 
                 # Use dataset's write_calibration_yaml method to create proper OpenCV FileStorage format
-                dataset.write_calibration_yaml(sequence_name=sequence_name, camera0=camera0)
+                dataset.write_calibration_yaml(sequence_name=sequence_name, rgb=[camera0])
                 print_msg(f"{ws(4)}", f"Created calibration.yaml from config.yaml using OpenCV FileStorage format")
             except Exception as e:
                 print_msg(f"{ws(4)}", f"Error creating calibration.yaml: {e}", "error")
                 # Try to use dataset's method with defaults
                 try:
                     camera0 = {
-                        "model": "OPENCV",
-                        "fx": 1446.91, "fy": 1451.58, "cx": 964.94, "cy": 607.07,
-                        "k1": -0.139, "k2": 0.237, "p1": -0.00064, "p2": 0.00071, "k3": -0.273
+                        "cam_name": "rgb_0",
+                        "cam_type": "rgb",
+                        "cam_model": "radtan5",
+                        "distortion_type": "radtan5",
+                        "focal_length": [1446.91, 1451.58],
+                        "principal_point": [964.94, 607.07],
+                        "distortion_coefficients": [-0.139, 0.237, -0.00064, 0.00071, -0.273],
+                        "fps": 5.0,
+                        "T_BS": np.eye(4)
                     }
-                    dataset.write_calibration_yaml(sequence_name=sequence_name, camera0=camera0)
+                    dataset.write_calibration_yaml(sequence_name=sequence_name, rgb=[camera0])
                     print_msg(f"{ws(4)}", f"Created calibration.yaml with default parameters")
                 except Exception as e2:
                     print_msg(f"{ws(4)}", f"Failed to create calibration.yaml: {e2}", "error")
@@ -1367,16 +1408,35 @@ def _generate_simple_pdf_report(trajectory_file, groundtruth_file, evaluation_fo
     
     # Read groundtruth - handle both comma and space-separated formats
     gt_df = None
+    # First, try comma-separated with header (our generated format: ts (ns), tx, ty, tz, qx, qy, qz, qw)
     try:
-        # Try space-separated first (TUM format)
-        gt_df = pd.read_csv(groundtruth_file, sep=' ', header=None)
-        if len(gt_df.columns) >= 8:
-            gt_df.columns = ['ts', 'tx', 'ty', 'tz', 'qx', 'qy', 'qz', 'qw'] + list(gt_df.columns[8:])
-        elif len(gt_df.columns) >= 3:
-            new_cols = ['ts', 'tx', 'ty'] + [f'col_{i}' for i in range(3, len(gt_df.columns))]
-            gt_df.columns = new_cols[:len(gt_df.columns)]
+        gt_df = pd.read_csv(groundtruth_file, sep=',')
+        # Check if we got valid columns
+        if gt_df is not None and len(gt_df.columns) >= 3:
+            # Normalize column names - handle 'ts (ns)' or 'ts' headers
+            col_mapping = {}
+            for col in gt_df.columns:
+                if col.startswith('ts'):
+                    col_mapping[col] = 'ts'
+            if col_mapping:
+                gt_df = gt_df.rename(columns=col_mapping)
     except Exception:
-        # If space-separated fails, try comma-separated
+        gt_df = None
+    
+    # If comma-separated with header failed, try space-separated (TUM format)
+    if gt_df is None or len(gt_df.columns) < 3:
+        try:
+            gt_df = pd.read_csv(groundtruth_file, sep=' ', header=None)
+            if len(gt_df.columns) >= 8:
+                gt_df.columns = ['ts', 'tx', 'ty', 'tz', 'qx', 'qy', 'qz', 'qw'] + list(gt_df.columns[8:])
+            elif len(gt_df.columns) >= 3:
+                new_cols = ['ts', 'tx', 'ty'] + [f'col_{i}' for i in range(3, len(gt_df.columns))]
+                gt_df.columns = new_cols[:len(gt_df.columns)]
+        except Exception:
+            pass
+    
+    # Last resort: try comma-separated with no header
+    if gt_df is None or len(gt_df.columns) < 3:
         try:
             gt_df = pd.read_csv(groundtruth_file, sep=',', header=None)
             if len(gt_df.columns) >= 8:
@@ -1384,19 +1444,8 @@ def _generate_simple_pdf_report(trajectory_file, groundtruth_file, evaluation_fo
             elif len(gt_df.columns) >= 3:
                 new_cols = ['ts', 'tx', 'ty'] + [f'col_{i}' for i in range(3, len(gt_df.columns))]
                 gt_df.columns = new_cols[:len(gt_df.columns)]
-        except Exception:
-            # Last resort: try with header
-            try:
-                gt_df = pd.read_csv(groundtruth_file)
-                # If we still have issues, check if columns need renaming
-                if not any(col in gt_df.columns for col in ['ts', 'tx', 'ty']):
-                    if len(gt_df.columns) >= 8:
-                        gt_df.columns = ['ts', 'tx', 'ty', 'tz', 'qx', 'qy', 'qz', 'qw'] + list(gt_df.columns[8:])
-                    elif len(gt_df.columns) >= 3:
-                        new_cols = ['ts', 'tx', 'ty'] + [f'col_{i}' for i in range(3, len(gt_df.columns))]
-                        gt_df.columns = new_cols[:len(gt_df.columns)]
-            except Exception as e:
-                raise ValueError(f"Failed to read groundtruth file: {groundtruth_file}. Error: {e}")
+        except Exception as e:
+            raise ValueError(f"Failed to read groundtruth file: {groundtruth_file}. Error: {e}")
     
     if gt_df is None or gt_df.empty:
         raise ValueError(f"Failed to read groundtruth file or file is empty: {groundtruth_file}")

@@ -48,8 +48,7 @@ from Datasets.dataset_videos import VIDEOS_dataset
 from Datasets.dataset_sweetcorals import SWEETCORALS_dataset
 from Datasets.dataset_ntnu_arl_uw import NTNU_ARL_UW_dataset
 from Datasets.dataset_reefslam import REEFSLAM_dataset
-from Datasets.dataset_s3li import S3LI_dataset
-from Datasets.dataset_lightning import LIGHTNING_dataset
+from Datasets.dataset_files.dataset_lightning import LIGHTNING_dataset
 
 SCRIPT_LABEL = f"\033[95m[{Path(__file__).name}]\033[0m "
 

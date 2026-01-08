@@ -66,15 +66,9 @@ compare.args = [
   { "arg" = "exp_yaml", "default" = "configs/exp_debug.yaml" }
 ]
 
-<<<<<<< HEAD
-get-resources.cmd = "python vslamlab_gui.py get-resources {{ exp_yaml }}"
-get-resources.args = [
-  { "arg" = "exp_yaml", "default" = "configs/exp_vslamlab.yaml" }
-=======
 eval-metrics.cmd = "python vslamlab_gui.py eval_metrics {{ exp_yaml }}"
 eval-metrics.args = [
   { "arg" = "exp_yaml", "default" = "configs/exp_debug.yaml" }
->>>>>>> cbcaad3 (Add eval-metrics command to evaluate SLAM experiments and generate metrics.json files; update README with usage instructions and enhance trajectory CSV reading in utilities.py.)
 ]
 
 eval-metrics-single.cmd = "python vslamlab_gui.py eval_metrics_single {{ config_yaml }}"
@@ -945,7 +939,6 @@ torchvision = "*"
 pytorch_scatter = "*"
 numpy = "*"
 opencv = "*"
-<<<<<<< HEAD
 
 yq = "*"
 pandas = "*"
@@ -971,9 +964,7 @@ einops = "*"
 pyproj = ">=3.7.1,<4"
 psutil = "*"
 timm = ">=1.0.15,<2"
-=======
 libtorch = "*"
 librealsense = "*"
 openmp = "*"
 libgfortran = "3.*"
->>>>>>> bdc7a57 (feat: Add eval_baselines function and configuration for batch evaluation of multiple sequences and baselines)

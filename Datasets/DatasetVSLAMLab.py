@@ -108,6 +108,19 @@ class DatasetVSLAMLab(ABC):
         calibration_yaml = sequence_path / 'calibration.yaml'
         
         yaml_content_lines = ["%YAML 1.2", "---",]
+        
+        # Add camera name mappings (required by baselines like mast3rslam, orbslam2)
+        if rgb:
+            # For mono mode, use the first camera
+            first_cam_name = rgb[0].get('cam_name', 'rgb_0') if rgb else 'rgb_0'
+            yaml_content_lines.append(f"cam_mono: {first_cam_name}")
+            if len(rgb) >= 2:
+                second_cam_name = rgb[1].get('cam_name', 'rgb_1')
+                yaml_content_lines.append(f"cam_stereo: [{first_cam_name}, {second_cam_name}]")
+        if rgbd:
+            first_cam_name = rgbd[0].get('cam_name', 'rgb_0') if rgbd else 'rgb_0'
+            yaml_content_lines.append(f"cam_rgbd: {first_cam_name}")
+        yaml_content_lines.append("")  # blank line for readability
 
         if rgb or rgbd:    
             yaml_content_lines.extend(["cameras:"])

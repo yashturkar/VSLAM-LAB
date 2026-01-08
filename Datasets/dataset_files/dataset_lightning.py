@@ -5,7 +5,7 @@ import csv
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 from pathlib import Path
-
+from path_constants import VSLAM_LAB_DIR
 from Datasets.DatasetVSLAMLab import DatasetVSLAMLab
 
 class LIGHTNING_dataset(DatasetVSLAMLab):
@@ -19,12 +19,24 @@ class LIGHTNING_dataset(DatasetVSLAMLab):
             cfg = yaml.safe_load(f) or {}
 
         # Get raw data path
-        self.raw_data_path: str = cfg["raw_data_path"]
+        self.raw_data_path: str = cfg.get("raw_data_path", "")
         
-        # Load calibration from lightning.yaml
-        lightning_yaml_path = os.path.join(self.raw_data_path, "lightning.yaml")
-        with open(lightning_yaml_path, "r", encoding="utf-8") as f:
-            self.lightning_cfg = yaml.safe_load(f) or {}
+        # Load calibration from lightning.yaml or lightning_settings.yaml
+        # Try multiple possible locations and filenames
+        possible_locations = [
+            str(VSLAM_LAB_DIR / "lightning.yaml"),
+            os.path.join(benchmark_path, "lightning_settings.yaml"),
+            os.path.join(benchmark_path, "lightning.yaml"),
+            os.path.join(self.raw_data_path, "lightning.yaml"),
+            os.path.join(self.raw_data_path, "lightning_settings.yaml"),
+        ]
+        
+        self.lightning_cfg = {}
+        for lightning_yaml_path in possible_locations:
+            if os.path.exists(lightning_yaml_path):
+                with open(lightning_yaml_path, "r", encoding="utf-8") as f:
+                    self.lightning_cfg = yaml.safe_load(f) or {}
+                break
 
         # Sequence nicknames
         self.sequence_nicknames = self.sequence_names
@@ -120,7 +132,7 @@ class LIGHTNING_dataset(DatasetVSLAMLab):
             "p2": p2,
             "k3": k3
         }
-        self.write_calibration_yaml(sequence_name=sequence_name, camera0=camera0)
+        self.write_calibration_yaml(sequence_name=sequence_name, rgb=[camera0])
 
     def create_groundtruth_csv(self, sequence_name: str) -> None:
         sequence_path = os.path.join(self.dataset_path, sequence_name)
