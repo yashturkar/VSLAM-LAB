@@ -474,6 +474,7 @@ def generate_metrics_json_single(trajectory_path, groundtruth_csv, evaluation_fo
         "ate": None,
         "trajectory_length": None,
         "length_ratio": None,
+        "gt_trajectory_length": None,
         "weighted_rmse": None,
         "timestamp": datetime.now().isoformat()
     }
@@ -513,6 +514,8 @@ def generate_metrics_json_single(trajectory_path, groundtruth_csv, evaluation_fo
             metrics["trajectory_length"] = trajectory_metrics["trajectory_length"]
         if "length_ratio" in trajectory_metrics:
             metrics["length_ratio"] = trajectory_metrics["length_ratio"]
+        if "gt_trajectory_length" in trajectory_metrics:
+            metrics["gt_trajectory_length"] = trajectory_metrics["gt_trajectory_length"]
     
     # Calculate weighted_rmse = RMSE / C^2 where C is coverage (length_ratio)
     if metrics["rmse"]["translation"] is not None and metrics["length_ratio"] is not None:

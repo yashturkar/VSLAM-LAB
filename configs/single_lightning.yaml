@@ -1,7 +1,7 @@
 DATASET:
-  base_path: /mnt/share/nas/tmp/lightning_vslam/vslam_03ommf4y
-  name: sequence_385097f5
-  baseline: monogs
+  base_path: /mnt/share/nas/tmp/lightning_vslam/vslam_3nlbqi47
+  name: sequence_31bc827d
+  baseline: vggtslam
   groundtruth_format: kitti
   output_dir: output
   sensor_type: mono
