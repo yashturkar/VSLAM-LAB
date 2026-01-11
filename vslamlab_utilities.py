@@ -802,26 +802,94 @@ def eval_metrics_single(config_yaml: str | Path) -> None:
                     writer.writerow([f"{ts:.6f}", tx, ty, tz, qx, qy, qz, qw])
             print_msg(f"{ws(4)}", f"Created groundtruth.csv from poses and times")
     
-    # Standard structure: look for existing files
-    rgb_csv = sequence_path / "rgb.csv"
-    if not rgb_csv.exists():
-        rgb_csv = sequence_path / "rgb_0.csv"
+    # Determine source RGB file from baseline config (default to rgb.csv)
+    rgb_source_name = getattr(baseline, 'rgb_source_file', 'rgb.csv')
+    print_msg(SCRIPT_LABEL, f"DEBUG: Baseline {baseline.baseline_name} using rgb source: {rgb_source_name}", "info")
+    rgb_csv = sequence_path / rgb_source_name
     
     if not rgb_csv.exists():
-        print_msg(SCRIPT_LABEL, f"Error: rgb.csv not found in {sequence_path}", "error")
+        # Fallback for backward compatibility or if specific file missing
+        if rgb_source_name == 'rgb.csv':
+             if (sequence_path / "rgb_0.csv").exists():
+                 rgb_csv = sequence_path / "rgb_0.csv"
+    
+    if not rgb_csv.exists():
+        print_msg(SCRIPT_LABEL, f"Error: {rgb_source_name} not found in {sequence_path}", "error")
         sys.exit(1)
     
     # Baseline will construct exp_folder as base_path / sequence_name (since dataset_folder is empty)
     actual_exp_folder = base_path / sequence_name
     rgb_exp_csv = actual_exp_folder / "rgb_exp.csv"
     if rgb_csv.exists():
-        shutil.copy(rgb_csv, rgb_exp_csv)
+        # Check and repair RGB CSV if needed (Force Fix for DroidSLAM etc)
+        repair_needed = False
+        with open(rgb_csv, 'r') as f:
+            header = f.readline().strip()
+            # If we need new format (path_rgb_0) but have old format (path_rgb0)
+            if 'path_rgb0' in header and 'path_rgb_0' not in header:
+                 if rgb_source_name == 'rgb.csv': # Only repair valid rgb.csv target
+                     repair_needed = True
+                     print_msg(SCRIPT_LABEL, f"WARNING: repairing legacy rgb.csv format for {baseline.baseline_name}", "warning")
+
+        if repair_needed:
+             # Read old format, write new format to rgb_exp_csv
+             df_temp = pd.read_csv(rgb_csv)
+             # Rename columns if they exist
+             rename_map = {}
+             if 'ts_rgb0 (s)' in df_temp.columns: 
+                 rename_map['ts_rgb0 (s)'] = 'ts_rgb_0 (ns)'
+                 # Convert seconds to ns
+                 df_temp['ts_rgb0 (s)'] = (df_temp['ts_rgb0 (s)'] * 1e9).astype(np.int64)
+             if 'path_rgb0' in df_temp.columns:
+                 rename_map['path_rgb0'] = 'path_rgb_0'
+             
+             df_temp.rename(columns=rename_map, inplace=True)
+             df_temp.to_csv(rgb_exp_csv, index=False)
+             print_msg(SCRIPT_LABEL, f"Repaired rgb_exp.csv headers: {df_temp.columns.tolist()}", "info")
+        else:
+             shutil.copy(rgb_csv, rgb_exp_csv)
     
     # Copy groundtruth if needed
-    groundtruth_src = sequence_path / GROUNTRUTH_FILE
+    # Select appropriate groundtruth file based on RGB source (Time Domain Heuristic)
+    # If using rgb.csv (New Format, Nanoseconds), prefer groundtruth_ns.csv
+    # If using rgb_mast3r.csv (Old Format, Seconds), use groundtruth.csv
+    gt_source_name = GROUNTRUTH_FILE # Default "groundtruth.csv" (Seconds)
+    
+    if rgb_source_name == 'rgb.csv' and (sequence_path / "groundtruth_ns.csv").exists():
+        gt_source_name = "groundtruth_ns.csv"
+        print_msg(SCRIPT_LABEL, f"DEBUG: Using nanosecond groundtruth ({gt_source_name}) for {baseline.baseline_name}", "info")
+    
+    groundtruth_src = sequence_path / gt_source_name
     groundtruth_dst = actual_exp_folder / GROUNTRUTH_FILE
-    if groundtruth_src.exists() and not groundtruth_dst.exists():
-        shutil.copy(groundtruth_src, groundtruth_dst)
+    if groundtruth_src.exists():
+        # Force-Convert Groundtruth to Nanoseconds if needed
+        # If DroidSLAM (rgb.csv) is used, we EXPECT nanoseconds.
+        # If groundtruth is seconds, we must convert.
+        check_conversion = (rgb_source_name == 'rgb.csv')
+        
+        if check_conversion:
+             try:
+                 df_gt = pd.read_csv(groundtruth_src)
+                 if not df_gt.empty and 'ts' in df_gt.columns:
+                     first_ts = df_gt['ts'].iloc[0]
+                     # Check if Seconds (e.g. 1.7e9) or Nanoseconds (1.7e18)
+                     # 1e10 is a safe threshold (10 seconds or 10 billion ns -> 10s is small)
+                     # Unix timestamp 1.7e9 vs 1.7e18. Threshold 1e14.
+                     if first_ts < 1e14: 
+                         print_msg(SCRIPT_LABEL, f"WARNING: Detected Second timestamps in groundtruth for DroidSLAM. Converting to Nanoseconds.", "warning")
+                         df_gt['ts'] = (df_gt['ts'] * 1e9).astype(np.int64)
+                         df_gt.to_csv(groundtruth_dst, index=False)
+                     else:
+                         shutil.copy(groundtruth_src, groundtruth_dst)
+                 else:
+                     shutil.copy(groundtruth_src, groundtruth_dst)
+             except Exception as e:
+                 print_msg(SCRIPT_LABEL, f"Error checking groundtruth: {e}", "error")
+                 if groundtruth_src.resolve() != groundtruth_dst.resolve():
+                    shutil.copy(groundtruth_src, groundtruth_dst)
+        else:
+            if groundtruth_src.resolve() != groundtruth_dst.resolve():
+                shutil.copy(groundtruth_src, groundtruth_dst)
     
     # Build and execute command
     # The baseline will construct sequence_path as dataset.dataset_path / sequence_name

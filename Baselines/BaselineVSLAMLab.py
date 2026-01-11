@@ -47,6 +47,16 @@ class BaselineVSLAMLab(ABC):
         self.baseline_path: Path = VSLAMLAB_BASELINES / baseline_folder
         self.settings_yaml: Path = self.baseline_path / f'vslamlab_{baseline_name}_settings.yaml'
 
+        # Calibration file - can be overridden by subclasses
+        # Default is 'calibration.yaml' (YAML 1.2 format)
+        # mast3rslam should override to 'calibration_cv.yaml' (OpenCV FileStorage format)
+        self.calibration_file: str = 'calibration.yaml'
+        
+        # RGB source file - can be overridden by subclasses
+        # Default is 'rgb.csv' (ts_rgb_0 (ns), path_rgb_0 format)
+        # mast3rslam should override to 'rgb_mast3r.csv' (ts_rgb0 (s), path_rgb0 format)
+        self.rgb_source_file: str = 'rgb.csv'
+
         # Defaults parameters
         self.default_parameters = default_parameters
 
@@ -111,7 +121,7 @@ class BaselineVSLAMLab(ABC):
     def build_execute_command_cpp(self, exp_it, exp, dataset, sequence_name):
         sequence_path = dataset.dataset_path / sequence_name
         exp_folder = Path(exp.folder) / dataset.dataset_folder / sequence_name
-        calibration_yaml = sequence_path / 'calibration.yaml'
+        calibration_yaml = sequence_path / self.calibration_file
         rgb_exp_csv = exp_folder / 'rgb_exp.csv'
 
         vslamlab_command = [f"sequence_path:{sequence_path}",
@@ -133,7 +143,7 @@ class BaselineVSLAMLab(ABC):
     def build_execute_command_python(self, exp_it, exp, dataset, sequence_name):
         sequence_path = dataset.dataset_path / sequence_name
         exp_folder = Path(exp.folder) / dataset.dataset_folder / sequence_name
-        calibration_yaml = sequence_path / 'calibration.yaml'
+        calibration_yaml = sequence_path / self.calibration_file
         rgb_exp_csv = exp_folder / 'rgb_exp.csv'
 
         vslamlab_command = [f"--sequence_path {sequence_path}",

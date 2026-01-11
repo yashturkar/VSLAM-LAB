@@ -106,6 +106,7 @@ class DatasetVSLAMLab(ABC):
     def write_calibration_yaml(self, sequence_name: str, rgb=None, rgbd=None, imu=None) -> None:
         sequence_path = self.dataset_path / sequence_name
         calibration_yaml = sequence_path / 'calibration.yaml'
+        calibration_cv_yaml = sequence_path / 'calibration_cv.yaml'  # For OLD mast3rslam
         
         # Get camera parameters from first rgb camera
         if rgb and len(rgb) > 0:
@@ -129,6 +130,10 @@ class DatasetVSLAMLab(ABC):
             k3 = cam.get('k3', dist[4] if isinstance(dist, list) and len(dist) > 4 else 0.0)
             
             model = cam.get('model', cam.get('cam_model', 'OPENCV'))
+            fps = cam.get('fps', 5.0)
+            cam_name = cam.get('cam_name', 'rgb_0')
+            cam_type = cam.get('cam_type', 'mono')
+            T_BS = cam.get('T_BS', None)
             
             # Get image dimensions from first image
             w, h = 1920, 1200  # default
@@ -145,9 +150,42 @@ class DatasetVSLAMLab(ABC):
                     except Exception:
                         pass
             
-            # Write OLD OpenCV FileStorage format (YAML:1.0 with Camera0.fx keys)
-            # This is required by OLD mast3rslam package
-            yaml_content_lines = [
+            # === Write NEW YAML 1.2 format (for droidslam, pycuvslam, orbslam2, etc.) ===
+            yaml_new_lines = ["%YAML 1.2", "---"]
+            yaml_new_lines.append(f"cam_mono: {cam_name}")
+            yaml_new_lines.append("")
+            yaml_new_lines.append("cameras:")
+            
+            # Format T_BS as string
+            if T_BS is not None:
+                import numpy as np
+                if hasattr(T_BS, 'flatten'):
+                    t_bs_list = T_BS.flatten().tolist()
+                elif isinstance(T_BS, list):
+                    t_bs_list = T_BS
+                else:
+                    t_bs_list = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+            else:
+                t_bs_list = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+            t_bs_str = ", ".join([f"{v:.10f}" if isinstance(v, float) else str(v) for v in t_bs_list])
+            
+            yaml_new_lines.append(f"  - {{cam_name: {cam_name},")
+            yaml_new_lines.append(f"     cam_type: {cam_type},")
+            yaml_new_lines.append(f"     cam_model: {model},")
+            yaml_new_lines.append(f"     focal_length: [{fx}, {fy}],")
+            yaml_new_lines.append(f"     principal_point: [{cx}, {cy}],")
+            yaml_new_lines.append(f"     distortion_coefficients: [{k1}, {k2}, {p1}, {p2}, {k3}],")
+            yaml_new_lines.append(f"     image_dimension: [{w}, {h}],")
+            yaml_new_lines.append(f"     fps: {fps},")
+            yaml_new_lines.append(f"     T_BS: [{t_bs_str}]")
+            yaml_new_lines.append(f"    }}")
+            
+            with open(calibration_yaml, 'w') as file:
+                for line in yaml_new_lines:
+                    file.write(f"{line}\n")
+            
+            # === Write OLD OpenCV FileStorage format (for mast3rslam) ===
+            yaml_cv_lines = [
                 "%YAML:1.0",
                 "---",
                 f"Camera0.model: {model}",
@@ -163,28 +201,38 @@ class DatasetVSLAMLab(ABC):
                 f"Camera0.w: {w}",
                 f"Camera0.h: {h}",
             ]
+            
+            with open(calibration_cv_yaml, 'w') as file:
+                for line in yaml_cv_lines:
+                    file.write(f"{line}\n")
         else:
-            # Fallback if no rgb camera provided
-            yaml_content_lines = [
-                "%YAML:1.0",
-                "---",
-                "Camera0.model: OPENCV",
-                "Camera0.fx: 1446.91",
-                "Camera0.fy: 1451.58",
-                "Camera0.cx: 964.94",
-                "Camera0.cy: 607.07",
-                "Camera0.k1: 0.0",
-                "Camera0.k2: 0.0",
-                "Camera0.p1: 0.0",
-                "Camera0.p2: 0.0",
-                "Camera0.k3: 0.0",
-                "Camera0.w: 1920",
-                "Camera0.h: 1200",
+            # Fallback if no rgb camera provided - write both formats with defaults
+            # NEW format
+            yaml_new_lines = [
+                "%YAML 1.2", "---", "cam_mono: rgb_0", "", "cameras:",
+                "  - {cam_name: rgb_0,", "     cam_type: mono,", "     cam_model: OPENCV,",
+                "     focal_length: [1446.91, 1451.58],", "     principal_point: [964.94, 607.07],",
+                "     distortion_coefficients: [0.0, 0.0, 0.0, 0.0, 0.0],",
+                "     image_dimension: [1920, 1200],", "     fps: 5.0,",
+                "     T_BS: [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]",
+                "    }"
             ]
-        
-        with open(calibration_yaml, 'w') as file:
-            for line in yaml_content_lines:
-                file.write(f"{line}\n")
+            with open(calibration_yaml, 'w') as file:
+                for line in yaml_new_lines:
+                    file.write(f"{line}\n")
+            
+            # OLD format
+            yaml_cv_lines = [
+                "%YAML:1.0", "---", "Camera0.model: OPENCV",
+                "Camera0.fx: 1446.91", "Camera0.fy: 1451.58",
+                "Camera0.cx: 964.94", "Camera0.cy: 607.07",
+                "Camera0.k1: 0.0", "Camera0.k2: 0.0",
+                "Camera0.p1: 0.0", "Camera0.p2: 0.0", "Camera0.k3: 0.0",
+                "Camera0.w: 1920", "Camera0.h: 1200",
+            ]
+            with open(calibration_cv_yaml, 'w') as file:
+                for line in yaml_cv_lines:
+                    file.write(f"{line}\n")
 
     def check_sequence_availability(self, sequence_name: str, verbose: bool = True) -> str:
         sequence_path = self.dataset_path / sequence_name

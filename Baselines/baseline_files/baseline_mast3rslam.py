@@ -21,6 +21,14 @@ class MAST3RSLAM_baseline(BaselineVSLAMLab):
         self.color = (0.470, 0.862, 0.628)
         self.modes = ['mono']
         self.camera_models = ['pinhole', 'radtan4', 'radtan5']
+        
+        # Override calibration file to use OLD OpenCV FileStorage format
+        # which is required by the OLD mast3rslam package
+        self.calibration_file = 'calibration_cv.yaml'
+        
+        # Override rgb source file to use OLD format (ts_rgb0 (s), path_rgb0)
+        # which is required by the OLD mast3rslam package
+        self.rgb_source_file = 'rgb_mast3r.csv'
 
     def build_execute_command(self, exp_it, exp, dataset, sequence_name):
         return super().build_execute_command_python(exp_it, exp, dataset, sequence_name)        

@@ -100,12 +100,22 @@ class LIGHTNING_dataset(DatasetVSLAMLab):
         rgb_files = [f for f in os.listdir(rgb_path) if os.path.isfile(os.path.join(rgb_path, f))]
         rgb_files.sort()
 
-        # Write CSV with seconds format for OLD mast3rslam package
-        # OLD package expects: ts_rgb0 (s) and path_rgb0 (no underscores before 0)
+        # Write NEW format (for pycuvslam, droidslam, etc.)
+        # NEW format uses underscores and nanoseconds: ts_rgb_0 (ns), path_rgb_0
         with open(rgb_csv, 'w', newline='') as csvfile:
             writer = csv.writer(csvfile)
-            writer.writerow(['ts_rgb0 (s)', 'path_rgb0'])
-            for t, fname in zip(times, rgb_files):  # pairs safely to the shorter list
+            writer.writerow(['ts_rgb_0 (ns)', 'path_rgb_0'])
+            for t, fname in zip(times, rgb_files):
+                ts_ns = int(t * 1e9)  # Convert seconds to nanoseconds
+                writer.writerow([str(ts_ns), f"rgb_0/{fname}"])
+        
+        # Write OLD format (for mast3rslam)
+        # OLD format uses no underscores and seconds: ts_rgb0 (s), path_rgb0
+        rgb_mast3r_csv = os.path.join(sequence_path, 'rgb_mast3r.csv')
+        with open(rgb_mast3r_csv, 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(['ts_rgb0 (s)', 'path_rgb0', 'DEBUG_TAG_DATASET_LIGHTNING'])
+            for t, fname in zip(times, rgb_files):
                 writer.writerow([f"{t:.6f}", f"rgb_0/{fname}"])
 
     def create_calibration_yaml(self, sequence_name: str) -> None:
@@ -134,7 +144,29 @@ class LIGHTNING_dataset(DatasetVSLAMLab):
         
         # Write OLD OpenCV FileStorage format (YAML:1.0 with Camera0.fx keys)
         # This is required by OLD mast3rslam package
+        # 1. NEW Format (YAML 1.2) for droidslam/pycuvslam
         calibration_yaml = os.path.join(sequence_path, 'calibration.yaml')
+        # cam_mono logic
+        yaml_new_lines = ["%YAML 1.2", "---", "cam_mono: rgb_0", "", "cameras:"]
+        t_bs_str = "1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0"
+        
+        yaml_new_lines.append(f"  - {{cam_name: rgb_0,")
+        yaml_new_lines.append(f"     cam_type: mono,")
+        yaml_new_lines.append(f"     cam_model: OPENCV,")
+        yaml_new_lines.append(f"     focal_length: [{fx}, {fy}],")
+        yaml_new_lines.append(f"     principal_point: [{cx}, {cy}],")
+        yaml_new_lines.append(f"     distortion_coefficients: [{k1}, {k2}, {p1}, {p2}, {k3}],")
+        yaml_new_lines.append(f"     image_dimension: [{w}, {h}],")
+        yaml_new_lines.append(f"     fps: 5.0,")
+        yaml_new_lines.append(f"     T_BS: [{t_bs_str}]")
+        yaml_new_lines.append(f"    }}")
+        
+        with open(calibration_yaml, 'w') as f:
+            for line in yaml_new_lines:
+                f.write(f"{line}\n")
+
+        # 2. OLD Format (OpenCV FileStorage) for mast3rslam
+        calibration_cv_yaml = os.path.join(sequence_path, 'calibration_cv.yaml')
         yaml_content_lines = [
             "%YAML:1.0",
             "---",
@@ -151,7 +183,7 @@ class LIGHTNING_dataset(DatasetVSLAMLab):
             f"Camera0.w: {w}",
             f"Camera0.h: {h}",
         ]
-        with open(calibration_yaml, 'w') as f:
+        with open(calibration_cv_yaml, 'w') as f:
             for line in yaml_content_lines:
                 f.write(f"{line}\n")
 
@@ -190,9 +222,28 @@ class LIGHTNING_dataset(DatasetVSLAMLab):
                             [vals[8], vals[9], vals[10]]], dtype=float)
                 tx, ty, tz = vals[3], vals[7], vals[11]
                 qx, qy, qz, qw = R.from_matrix(Rm).as_quat()  # [x, y, z, w]
+                # Write seconds to groundtruth.csv (Default/OLD format for MASt3R-SLAM)
                 ts = times[idx]
-
                 writer.writerow([f"{ts:.6f}", tx, ty, tz, qx, qy, qz, qw])
+
+        # Create additional groundtruth_ns.csv (NEW format for DroidSLAM/PyCuVSLAM)
+        out_ns_csv = os.path.join(sequence_path, 'groundtruth_ns.csv')
+        with open(poses_txt, 'r') as src, open(out_ns_csv, 'w', newline='') as dst:
+            writer = csv.writer(dst)
+            writer.writerow(['ts', 'tx', 'ty', 'tz', 'qx', 'qy', 'qz', 'qw'])
+            src.seek(0) # Reset poses file reading
+            for idx, line in enumerate(src):
+                if idx >= len(times): break
+                vals = list(map(float, line.strip().split()))
+                # row-major 3x4: r00 r01 r02 tx r10 r11 r12 ty r20 r21 r22 tz
+                Rm = np.array([[vals[0], vals[1], vals[2]],
+                            [vals[4], vals[5], vals[6]],
+                            [vals[8], vals[9], vals[10]]], dtype=float)
+                tx, ty, tz = vals[3], vals[7], vals[11]
+                qx, qy, qz, qw = R.from_matrix(Rm).as_quat()
+                
+                ts_ns = int(times[idx] * 1e9)
+                writer.writerow([str(ts_ns), tx, ty, tz, qx, qy, qz, qw])
 
     def create_imu_csv(self, sequence_name: str) -> None:
         # No IMU data available
