@@ -100,7 +100,8 @@ class LIGHTNING_dataset(DatasetVSLAMLab):
         rgb_files = [f for f in os.listdir(rgb_path) if os.path.isfile(os.path.join(rgb_path, f))]
         rgb_files.sort()
 
-        # Write CSV with header
+        # Write CSV with seconds format for OLD mast3rslam package
+        # OLD package expects: ts_rgb0 (s) and path_rgb0 (no underscores before 0)
         with open(rgb_csv, 'w', newline='') as csvfile:
             writer = csv.writer(csvfile)
             writer.writerow(['ts_rgb0 (s)', 'path_rgb0'])
@@ -118,21 +119,41 @@ class LIGHTNING_dataset(DatasetVSLAMLab):
         p1 = float(self.lightning_cfg.get('Camera.p1', -0.0006401710568311474))
         p2 = float(self.lightning_cfg.get('Camera.p2', 0.000710816965242213))
         k3 = float(self.lightning_cfg.get('Camera.k3', -0.2731326697949815))
-
-        # Use OPENCV model since we have distortion parameters
-        camera0 = {
-            "model": "OPENCV",
-            "fx": fx,
-            "fy": fy,
-            "cx": cx,
-            "cy": cy,
-            "k1": k1,
-            "k2": k2,
-            "p1": p1,
-            "p2": p2,
-            "k3": k3
-        }
-        self.write_calibration_yaml(sequence_name=sequence_name, rgb=[camera0])
+        
+        # Get image dimensions from first image in sequence
+        sequence_path = os.path.join(self.dataset_path, sequence_name)
+        rgb_path = os.path.join(sequence_path, 'rgb_0')
+        w, h = 1920, 1200  # default
+        if os.path.exists(rgb_path):
+            import cv2
+            rgb_files = sorted([f for f in os.listdir(rgb_path) if f.endswith(('.png', '.jpg', '.jpeg'))])
+            if rgb_files:
+                img = cv2.imread(os.path.join(rgb_path, rgb_files[0]))
+                if img is not None:
+                    h, w = img.shape[:2]
+        
+        # Write OLD OpenCV FileStorage format (YAML:1.0 with Camera0.fx keys)
+        # This is required by OLD mast3rslam package
+        calibration_yaml = os.path.join(sequence_path, 'calibration.yaml')
+        yaml_content_lines = [
+            "%YAML:1.0",
+            "---",
+            f"Camera0.model: OPENCV",
+            f"Camera0.fx: {fx}",
+            f"Camera0.fy: {fy}",
+            f"Camera0.cx: {cx}",
+            f"Camera0.cy: {cy}",
+            f"Camera0.k1: {k1}",
+            f"Camera0.k2: {k2}",
+            f"Camera0.p1: {p1}",
+            f"Camera0.p2: {p2}",
+            f"Camera0.k3: {k3}",
+            f"Camera0.w: {w}",
+            f"Camera0.h: {h}",
+        ]
+        with open(calibration_yaml, 'w') as f:
+            for line in yaml_content_lines:
+                f.write(f"{line}\n")
 
     def create_groundtruth_csv(self, sequence_name: str) -> None:
         sequence_path = os.path.join(self.dataset_path, sequence_name)
@@ -157,7 +178,7 @@ class LIGHTNING_dataset(DatasetVSLAMLab):
 
         with open(poses_txt, 'r') as src, open(out_csv, 'w', newline='') as dst:
             writer = csv.writer(dst)
-            writer.writerow(['ts', 'tx', 'ty', 'tz', 'qx', 'qy', 'qz', 'qw'])  # header
+            writer.writerow(['ts', 'tx', 'ty', 'tz', 'qx', 'qy', 'qz', 'qw'])  # header - seconds
 
             for idx, line in enumerate(src):
                 if idx >= len(times):

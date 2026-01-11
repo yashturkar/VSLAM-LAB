@@ -696,14 +696,13 @@ def eval_metrics_single(config_yaml: str | Path) -> None:
             rgb_files = sorted([f.name for f in rgb_0_path.iterdir() 
                               if f.is_file() and f.suffix.lower() in ['.png', '.jpg', '.jpeg']])
             
-            # Write CSV with timestamps in nanoseconds for mast3rslam compatibility
+            # Write CSV with timestamps in seconds - for OLD mast3rslam package
+            # OLD package expects: ts_rgb0 (s) and path_rgb0 (no underscores before 0)
             with open(rgb_csv, 'w', newline='') as csvfile:
                 writer = csv.writer(csvfile)
-                writer.writerow(['ts_rgb_0 (ns)', 'path_rgb_0'])
+                writer.writerow(['ts_rgb0 (s)', 'path_rgb0'])
                 for t, fname in zip(times, rgb_files):
-                    # Convert seconds to nanoseconds
-                    ts_ns = int(t * 1e9)
-                    writer.writerow([ts_ns, f"rgb_0/{fname}"])
+                    writer.writerow([f"{t:.6f}", f"rgb_0/{fname}"])
             print_msg(f"{ws(4)}", f"Created rgb.csv from {len(rgb_files)} images")
         
         # Create calibration.yaml from config.yaml using proper OpenCV FileStorage format
@@ -786,8 +785,8 @@ def eval_metrics_single(config_yaml: str | Path) -> None:
             
             with open(poses_txt, 'r') as src, open(groundtruth_csv, 'w', newline='') as dst:
                 writer = csv.writer(dst)
-                # Use nanosecond timestamps to match trajectory output from SLAM baselines
-                writer.writerow(['ts (ns)', 'tx', 'ty', 'tz', 'qx', 'qy', 'qz', 'qw'])
+                # Use seconds timestamps for OLD mast3rslam package
+                writer.writerow(['ts', 'tx', 'ty', 'tz', 'qx', 'qy', 'qz', 'qw'])
                 
                 for idx, line in enumerate(src):
                     if idx >= len(times):
@@ -799,9 +798,8 @@ def eval_metrics_single(config_yaml: str | Path) -> None:
                                 [vals[8], vals[9], vals[10]]], dtype=float)
                     tx, ty, tz = vals[3], vals[7], vals[11]
                     qx, qy, qz, qw = R.from_matrix(Rm).as_quat()  # [x, y, z, w]
-                    # Convert seconds to nanoseconds to match rgb.csv and trajectory output
-                    ts_ns = int(times[idx] * 1e9)
-                    writer.writerow([ts_ns, tx, ty, tz, qx, qy, qz, qw])
+                    ts = times[idx]
+                    writer.writerow([f"{ts:.6f}", tx, ty, tz, qx, qy, qz, qw])
             print_msg(f"{ws(4)}", f"Created groundtruth.csv from poses and times")
     
     # Standard structure: look for existing files
@@ -948,14 +946,22 @@ def eval_metrics_single(config_yaml: str | Path) -> None:
         
         sys.exit(1)
     
-    # Find trajectory file - baseline saves to base_path / sequence_name
+    # Find trajectory file - baseline saves to base_path / sequence_name or base_path / sequence_name / output
     actual_exp_folder = base_path / sequence_name
+    output_folder = actual_exp_folder / "output"  # mast3rslam saves to output subfolder
     trajectory_csv = actual_exp_folder / f"{str(exp_it).zfill(5)}_{TRAJECTORY_FILE_NAME}.csv"
     trajectory_txt = actual_exp_folder / f"{str(exp_it).zfill(5)}_{TRAJECTORY_FILE_NAME}.txt"
+    
+    # Also check output subfolder (mast3rslam saves there)
+    trajectory_csv_output = output_folder / f"{str(exp_it).zfill(5)}_{TRAJECTORY_FILE_NAME}.csv"
+    trajectory_txt_output = output_folder / f"{str(exp_it).zfill(5)}_{TRAJECTORY_FILE_NAME}.txt"
     
     trajectory_file = None
     if trajectory_csv.exists():
         trajectory_file = str(trajectory_csv)
+    elif trajectory_csv_output.exists():
+        trajectory_file = str(trajectory_csv_output)
+        print_msg(f"{ws(4)}", f"Found trajectory in output subfolder: {trajectory_file}", verb='LOW')
     elif trajectory_txt.exists():
         # Convert TXT to CSV if needed
         from utilities import read_trajectory_txt, save_trajectory_csv
@@ -965,6 +971,16 @@ def eval_metrics_single(config_yaml: str | Path) -> None:
                 traj_df.columns = ['ts', 'tx', 'ty', 'tz', 'qx', 'qy', 'qz', 'qw']
             save_trajectory_csv(str(trajectory_csv), traj_df, header=True)
             trajectory_file = str(trajectory_csv)
+    elif trajectory_txt_output.exists():
+        # Convert TXT to CSV if needed (from output subfolder)
+        from utilities import read_trajectory_txt, save_trajectory_csv
+        print_msg(f"{ws(4)}", f"Found trajectory TXT in output subfolder: {trajectory_txt_output}", verb='LOW')
+        traj_df = read_trajectory_txt(str(trajectory_txt_output))
+        if traj_df is not None and not traj_df.empty:
+            if len(traj_df.columns) >= 8:
+                traj_df.columns = ['ts', 'tx', 'ty', 'tz', 'qx', 'qy', 'qz', 'qw']
+            save_trajectory_csv(str(trajectory_csv_output), traj_df, header=True)
+            trajectory_file = str(trajectory_csv_output)
     
     if trajectory_file is None:
         print_msg(SCRIPT_LABEL, "Error: Trajectory file not found after SLAM execution", "error")
@@ -1233,14 +1249,13 @@ def demo_single(config_yaml: str | Path) -> None:
             rgb_files = sorted([f.name for f in rgb_0_path.iterdir() 
                               if f.is_file() and f.suffix.lower() in ['.png', '.jpg', '.jpeg']])
             
-            # Write CSV with timestamps in nanoseconds for mast3rslam compatibility
+            # Write CSV with timestamps in seconds - for OLD mast3rslam package
+            # OLD package expects: ts_rgb0 (s) and path_rgb0 (no underscores before 0)
             with open(rgb_csv, 'w', newline='') as csvfile:
                 writer = csv.writer(csvfile)
-                writer.writerow(['ts_rgb_0 (ns)', 'path_rgb_0'])
+                writer.writerow(['ts_rgb0 (s)', 'path_rgb0'])
                 for t, fname in zip(times, rgb_files):
-                    # Convert seconds to nanoseconds
-                    ts_ns = int(t * 1e9)
-                    writer.writerow([ts_ns, f"rgb_0/{fname}"])
+                    writer.writerow([f"{t:.6f}", f"rgb_0/{fname}"])
             print_msg(f"{ws(4)}", f"Created rgb.csv from {len(rgb_files)} images")
         
         # Create calibration.yaml from config.yaml using proper OpenCV FileStorage format

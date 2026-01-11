@@ -107,35 +107,81 @@ class DatasetVSLAMLab(ABC):
         sequence_path = self.dataset_path / sequence_name
         calibration_yaml = sequence_path / 'calibration.yaml'
         
-        yaml_content_lines = ["%YAML 1.2", "---",]
+        # Get camera parameters from first rgb camera
+        if rgb and len(rgb) > 0:
+            cam = rgb[0]
+            
+            # Handle both formats: individual keys (fx, fy) and list format (focal_length)
+            focal = cam.get('focal_length', [1446.91, 1451.58])
+            fx = cam.get('fx', focal[0] if isinstance(focal, list) else 1446.91)
+            fy = cam.get('fy', focal[1] if isinstance(focal, list) and len(focal) > 1 else 1451.58)
+            
+            pp = cam.get('principal_point', [964.94, 607.07])
+            cx = cam.get('cx', pp[0] if isinstance(pp, list) else 964.94)
+            cy = cam.get('cy', pp[1] if isinstance(pp, list) and len(pp) > 1 else 607.07)
+            
+            # Handle distortion_coefficients list or individual keys
+            dist = cam.get('distortion_coefficients', [0.0, 0.0, 0.0, 0.0, 0.0])
+            k1 = cam.get('k1', dist[0] if isinstance(dist, list) else 0.0)
+            k2 = cam.get('k2', dist[1] if isinstance(dist, list) and len(dist) > 1 else 0.0)
+            p1 = cam.get('p1', dist[2] if isinstance(dist, list) and len(dist) > 2 else 0.0)
+            p2 = cam.get('p2', dist[3] if isinstance(dist, list) and len(dist) > 3 else 0.0)
+            k3 = cam.get('k3', dist[4] if isinstance(dist, list) and len(dist) > 4 else 0.0)
+            
+            model = cam.get('model', cam.get('cam_model', 'OPENCV'))
+            
+            # Get image dimensions from first image
+            w, h = 1920, 1200  # default
+            rgb_0_path = sequence_path / 'rgb_0'
+            if rgb_0_path.exists():
+                rgb_files = sorted([f for f in rgb_0_path.iterdir() 
+                                  if f.is_file() and f.suffix.lower() in ['.png', '.jpg', '.jpeg']])
+                if rgb_files:
+                    try:
+                        import cv2
+                        img = cv2.imread(str(rgb_files[0]))
+                        if img is not None:
+                            h, w = img.shape[:2]
+                    except Exception:
+                        pass
+            
+            # Write OLD OpenCV FileStorage format (YAML:1.0 with Camera0.fx keys)
+            # This is required by OLD mast3rslam package
+            yaml_content_lines = [
+                "%YAML:1.0",
+                "---",
+                f"Camera0.model: {model}",
+                f"Camera0.fx: {fx}",
+                f"Camera0.fy: {fy}",
+                f"Camera0.cx: {cx}",
+                f"Camera0.cy: {cy}",
+                f"Camera0.k1: {k1}",
+                f"Camera0.k2: {k2}",
+                f"Camera0.p1: {p1}",
+                f"Camera0.p2: {p2}",
+                f"Camera0.k3: {k3}",
+                f"Camera0.w: {w}",
+                f"Camera0.h: {h}",
+            ]
+        else:
+            # Fallback if no rgb camera provided
+            yaml_content_lines = [
+                "%YAML:1.0",
+                "---",
+                "Camera0.model: OPENCV",
+                "Camera0.fx: 1446.91",
+                "Camera0.fy: 1451.58",
+                "Camera0.cx: 964.94",
+                "Camera0.cy: 607.07",
+                "Camera0.k1: 0.0",
+                "Camera0.k2: 0.0",
+                "Camera0.p1: 0.0",
+                "Camera0.p2: 0.0",
+                "Camera0.k3: 0.0",
+                "Camera0.w: 1920",
+                "Camera0.h: 1200",
+            ]
         
-        # Add camera name mappings (required by baselines like mast3rslam, orbslam2)
-        if rgb:
-            # For mono mode, use the first camera
-            first_cam_name = rgb[0].get('cam_name', 'rgb_0') if rgb else 'rgb_0'
-            yaml_content_lines.append(f"cam_mono: {first_cam_name}")
-            if len(rgb) >= 2:
-                second_cam_name = rgb[1].get('cam_name', 'rgb_1')
-                yaml_content_lines.append(f"cam_stereo: [{first_cam_name}, {second_cam_name}]")
-        if rgbd:
-            first_cam_name = rgbd[0].get('cam_name', 'rgb_0') if rgbd else 'rgb_0'
-            yaml_content_lines.append(f"cam_rgbd: {first_cam_name}")
-        yaml_content_lines.append("")  # blank line for readability
-
-        if rgb or rgbd:    
-            yaml_content_lines.extend(["cameras:"])
-            if rgb:
-                for rgb_i in rgb:
-                    yaml_content_lines.extend(_get_rgb_yaml_section(rgb_i, sequence_name, self.dataset_path))
-            if rgbd:
-                for rgbd_i in rgbd:
-                    yaml_content_lines.extend(_get_rgbd_yaml_section(rgbd_i, sequence_name, self.dataset_path))
-
-        if imu:
-            yaml_content_lines.extend(["\nimus:"])
-            for imu_i in imu:
-                yaml_content_lines.extend(_get_imu_yaml_section(imu_i))
-
         with open(calibration_yaml, 'w') as file:
             for line in yaml_content_lines:
                 file.write(f"{line}\n")

@@ -9,12 +9,39 @@ def load_rgb_csv(rgb_csv):
 
     csv_path = Path(rgb_csv)  
     df = pd.read_csv(csv_path)  
-    rgb_paths = df['path_rgb0'].to_list()
-    rgb_timestamps = df['ts_rgb0 (s)'].to_list()
+    
+    # Handle multiple column name formats for compatibility
+    # Try underscore format first, then legacy format
+    path_col = None
+    ts_col = None
+    for col in ['path_rgb_0', 'path_rgb0']:
+        if col in df.columns:
+            path_col = col
+            break
+    for col in ['ts_rgb_0 (s)', 'ts_rgb0 (s)', 'ts_rgb_0 (ns)', 'ts_rgb0 (ns)']:
+        if col in df.columns:
+            ts_col = col
+            break
+    
+    if path_col is None or ts_col is None:
+        raise KeyError(f"Required columns not found in {rgb_csv}. Available: {list(df.columns)}")
+    
+    rgb_paths = df[path_col].to_list()
+    rgb_timestamps = df[ts_col].to_list()
 
-    if 'ts_depth0 (s)' in df.columns and 'path_depth0' in df.columns:
-        depth_paths = df['path_depth0'].to_list()
-        depth_timestamps = df['ts_depth0 (s)'].to_list()
+    # Handle depth columns with same flexibility
+    depth_paths = None
+    depth_timestamps = None
+    for col in ['path_depth_0', 'path_depth0']:
+        if col in df.columns:
+            depth_paths = df[col].to_list()
+            break
+    for col in ['ts_depth_0 (s)', 'ts_depth0 (s)', 'ts_depth_0 (ns)', 'ts_depth0 (ns)']:
+        if col in df.columns:
+            depth_timestamps = df[col].to_list()
+            break
+    
+    if depth_paths is not None and depth_timestamps is not None:
         return rgb_paths, rgb_timestamps, depth_paths, depth_timestamps
     
     return rgb_paths, rgb_timestamps

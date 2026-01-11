@@ -180,11 +180,11 @@ platforms = ["linux-64"]
 cuda = "12.0"
 
 [feature.mast3rslam.tasks]
-git-clone = 'git clone https://huggingface.co/vslamlab/mast3rslam-vslamlab Baselines/MASt3R-SLAM'
+git-clone = 'git clone https://huggingface.co/vslamlab/mast3rslam Baselines/MASt3R-SLAM'
 execute-mono = 'vslamlab_mast3rslam_mono'
 
 [feature.mast3rslam.dependencies]
-mast3rslam-vslamlab = { channel = "fontan" }
+mast3rslam = { channel = "fontan" }
 lietorch = { channel = "fontan" }
 moderngl-window = { channel = "fontan" }
 roma = { channel = "fontan" }
