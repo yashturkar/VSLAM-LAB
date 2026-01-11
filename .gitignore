@@ -9,52 +9,39 @@ Compare/__pycache__/
 
 # pixi environments
 .pixi
-#pixi.lock
 
 # Baselines
+Baselines/*.txt*
 Baselines/DROID-SLAM
 Baselines/DROID-SLAM-DEV
 Baselines/MASt3R-SLAM
 Baselines/MASt3R-SLAM-DEV
-Baselines/ORB_SLAM2
-Baselines/ORB_SLAM2-DEV
+Baselines/ORB-SLAM2
+Baselines/ORB-SLAM2-DEV
 Baselines/AnyFeature-VSLAM
 Baselines/AnyFeature-VSLAM-DEV
 Baselines/DPVO
 Baselines/DPVO-DEV
 Baselines/MonoGS
 Baselines/MonoGS-DEV
-Baselines/VGGT-DEV
-Baselines/GenSfM-DEV
-Baselines/MASt3R-DEV
-
-Baselines/ORB_SLAM3
-Baselines/ORB_SLAM3-DEV
+Baselines/VGGT
+Baselines/ORB-SLAM3
+Baselines/ORB-SLAM3-DEV
 Baselines/OKVIS2
 Baselines/OKVIS2-DEV
-Baselines/PyCuVSLAM/
-
-Baselines/AnyFeature-VSLAM
-Baselines/dso
-Baselines/dust3r
-Baselines/mono_dataset_code
+Baselines/PyCuVSLAM
 Baselines/colmap
 Baselines/glomap
-Baselines/r2d2
-Baselines/kalibr_catkin
-Baselines/Depth-Anything-V2
-Baselines/staticfusion
-Baselines/spann3r
-Baselines/ml-depth-pro
-Baselines/DroidCalib
-Baselines/*.txt*
-Baselines/pyslam
-Baselines/MAGiC-SLAM
+Baselines/LightGlue
+Baselines/VGGT-SLAM-DEV
+Baselines/VGGT-SLAM
 
 path_constants.py
-
 configs/config_demo.yaml
 configs/exp_demo.yaml
 
 #VSCode
 .vscode/
+
+app.log
+Baselines/ORB_SLAM2

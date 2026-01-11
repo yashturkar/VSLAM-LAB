@@ -190,6 +190,8 @@ def compute_trajectory_metrics(evaluation_folder, exp_it, groundtruth_csv):
         result["trajectory_length"] = float(trajectory_length)
     if length_ratio is not None:
         result["length_ratio"] = float(length_ratio)
+    if gt_length is not None:
+        result["gt_trajectory_length"] = float(gt_length)
     
     return result if result else None
 
@@ -230,6 +232,7 @@ def generate_metrics_json(exp, dataset, sequence_name, exp_it, status="SUCCESS")
         "ate": None,
         "trajectory_length": None,
         "length_ratio": None,
+        "gt_trajectory_length": None,
         "weighted_rmse": None,
         "timestamp": datetime.now().isoformat()
     }
@@ -276,6 +279,8 @@ def generate_metrics_json(exp, dataset, sequence_name, exp_it, status="SUCCESS")
             metrics["trajectory_length"] = trajectory_metrics["trajectory_length"]
         if "length_ratio" in trajectory_metrics:
             metrics["length_ratio"] = trajectory_metrics["length_ratio"]
+        if "gt_trajectory_length" in trajectory_metrics:
+            metrics["gt_trajectory_length"] = trajectory_metrics["gt_trajectory_length"]
     
     # Calculate weighted_rmse = RMSE / C^2 where C is coverage (length_ratio)
     if metrics["rmse"]["translation"] is not None and metrics["length_ratio"] is not None:

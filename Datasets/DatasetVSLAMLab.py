@@ -1,31 +1,38 @@
 """
 Module: VSLAM-LAB - Datasets - DatasetVSLAMLab.py
 - Author: Alejandro Fontan Villacampa
-- Version: 1.0
+- Version: 2.0
 - Created: 2024-07-12
-- Updated: 2024-07-12
+- Updated: 2025-12-30
 - License: GPLv3 License
 
 DatasetVSLAMLab: A class to handle Visual SLAM dataset-related operations.
 
 """
 
-import os, sys, yaml
+import sys
+import yaml
+from loguru import logger
 from pathlib import Path
-from typing import Iterable, List, Union
+from typing import List, Union
 from abc import ABC, abstractmethod
 
-from utilities import ws
+from utilities import ws, print_msg
 from path_constants import VSLAM_LAB_DIR
-from Datasets.dataset_calibration import _get_camera_yaml_section
-from Datasets.dataset_calibration import _get_imu_yaml_section
-from Datasets.dataset_calibration import _get_rgbd_yaml_section
-from Datasets.dataset_calibration import _get_stereo_yaml_section
+from Datasets.DatasetVSLAMLab_calibration import (
+    _get_rgb_yaml_section,
+    _get_imu_yaml_section,
+    _get_rgbd_yaml_section
+)
 
-SCRIPT_LABEL = f"\033[95m[{os.path.basename(__file__)}]\033[0m "
+SCRIPT_LABEL = f"\033[95m[{Path(__file__).name}]\033[0m "
 
-class DatasetVSLAMLab:
+
+class DatasetVSLAMLab(ABC):
     """Base dataset class for VSLAM-LAB."""
+
+    # ---- Abstract hooks that concrete datasets must implement ----
+    @abstractmethod
     def __init__(self, dataset_name: str, benchmark_path: Union[str, Path]) -> None:  
         # Basic fields
         self.dataset_name: str = dataset_name
@@ -36,7 +43,7 @@ class DatasetVSLAMLab:
         # Paths
         self.benchmark_path: Path = Path(benchmark_path)
         self.dataset_path: Path = self.benchmark_path / self.dataset_folder
-        self.yaml_file: Path = Path(VSLAM_LAB_DIR) / "Datasets" / f"dataset_{self.dataset_name}.yaml"
+        self.yaml_file: Path = VSLAM_LAB_DIR / "Datasets" / "dataset_files" / f"dataset_{self.dataset_name}.yaml"
 
         # Load YAML config
         with open(self.yaml_file, "r", encoding="utf-8") as f:
@@ -46,40 +53,8 @@ class DatasetVSLAMLab:
         self.rgb_hz: float = float(cfg["rgb_hz"])
         self.modes: List[str] = cfg.get("modes", ["mono"])
         self.sequence_nicknames: List[str] = []
-
-    ####################################################################################################################
-    # Download methods
-    def download_sequence(self, sequence_name):
-
-        # Check if sequence is already available
-        sequence_availability = self.check_sequence_availability(sequence_name)
-        if sequence_availability == "available":
-            #print(f"{SCRIPT_LABEL}Sequence {self.dataset_color}{sequence_name}:\033[92m downloaded\033[0m")
-            return
-        if sequence_availability == "corrupted":
-            print(f"{ws(8)}Some files in sequence {sequence_name} are corrupted.")
-            print(f"{ws(8)}Removing and downloading again sequence {sequence_name} ")
-            print(f"{ws(8)}THIS PART OF THE CODE IS NOT YET IMPLEMENTED. REMOVE THE FILES MANUALLY")
-            sys.exit(1)
-
-        # Download process
-        if not os.path.exists(self.dataset_path):
-            os.makedirs(self.dataset_path, exist_ok=True)
-
-        self.download_process(sequence_name)
-
-    def download_process(self, sequence_name):
-        msg = f"Downloading sequence {self.dataset_color}{sequence_name}\033[0m from dataset {self.dataset_color}{self.dataset_name}\033[0m ..."
-        print(SCRIPT_LABEL + msg)
-        self.download_sequence_data(sequence_name)
-        self.create_rgb_folder(sequence_name)
-        self.create_rgb_csv(sequence_name)
-        self.create_imu_csv(sequence_name)
-        self.create_calibration_yaml(sequence_name)
-        self.create_groundtruth_csv(sequence_name)
-        self.remove_unused_files(sequence_name)
+        self.cam_models: List[str] = cfg.get("cam_models", ["pinhole"])
         
-    # ---- Abstract hooks that concrete datasets must implement ----
     @abstractmethod
     def download_sequence_data(self, sequence_name: str) -> None: ...
     @abstractmethod
@@ -87,64 +62,181 @@ class DatasetVSLAMLab:
     @abstractmethod
     def create_rgb_csv(self, sequence_name: str) -> None: ...
     @abstractmethod
-    def create_imu_csv(self, sequence_name: str) -> None: ...
-    @abstractmethod
     def create_calibration_yaml(self, sequence_name: str) -> None: ...
-    @abstractmethod
-    def create_groundtruth_csv(self, sequence_name: str) -> None: ...
-    @abstractmethod
-    def remove_unused_files(self, sequence_name: str) -> None: ...
 
-
-    def get_download_issues(self, sequence_names):
+    def create_imu_csv(self, sequence_name: str) -> None:
+        pass
+    def create_groundtruth_csv(self, sequence_name: str) -> None:
+        pass
+    def remove_unused_files(self, sequence_name: str) -> None: 
+        pass
+    def get_download_issues(self, sequence_names: List[str]) -> dict:
         return {}
+    
+    ####################################################################################################################
+    # Download methods
+    def download_sequence(self, sequence_name: str) -> None:
 
-    def write_calibration_yaml(self, sequence_name, camera0=None, camera1=None, imu=None, rgbd=None, stereo=None):
-    #Write calibration YAML file with flexible sensor configuration.
-    #Args:
-    #    sequence_name: Name of the sequence
-    #    camera0: Dict with keys: model, fx, fy, cx, cy, k1, k2, p1, p2, k3
-    #    camera1: Dict with keys: model, fx, fy, cx, cy, k1, k2, p1, p2, k3 (for stereo)
-    #    imu: Dict with keys: transform, accel_noise, gyro_noise, accel_bias, gyro_bias, frequency
-    #    rgbd: Dict with keys: depth_factor, depth_scale (optional)       
+        # Check if sequence is already available
+        sequence_availability = self.check_sequence_availability(sequence_name, verbose=True)
+        if sequence_availability == "available":
+            #print(f"{SCRIPT_LABEL}Sequence {self.dataset_color}{sequence_name}:\033[92m downloaded\033[0m")
+            return
+        if sequence_availability == "corrupted":
+            logger.error(f"\n{ws(4)}Files in sequence {sequence_name} are corrupted.\n{ws(4)}Removing and downloading again sequence {sequence_name}.\n{ws(4)}THIS PART OF THE CODE IS NOT YET IMPLEMENTED. REMOVE THE FILES MANUALLY ")
+            sys.exit(1)
 
-        sequence_path = os.path.join(self.dataset_path, sequence_name)
-        calibration_yaml = os.path.join(sequence_path, 'calibration.yaml')
+        # Download process
+        self.dataset_path.mkdir(parents=True, exist_ok=True)
+        self.download_process(sequence_name)
+
+    def download_process(self, sequence_name: str) -> None:
+        msg = f"Downloading sequence {self.dataset_color}{sequence_name}\033[0m from dataset {self.dataset_color}{self.dataset_name}\033[0m ..."
+        print_msg(SCRIPT_LABEL, msg)
+        self.download_sequence_data(sequence_name)
+        self.create_rgb_folder(sequence_name)
+        self.create_rgb_csv(sequence_name)
+        self.create_imu_csv(sequence_name)
+        self.create_calibration_yaml(sequence_name)
+        self.create_groundtruth_csv(sequence_name)
+        self.remove_unused_files(sequence_name)
+
+    ####################################################################################################################
+    # Auxiliary methods
+    def write_calibration_yaml(self, sequence_name: str, rgb=None, rgbd=None, imu=None) -> None:
+        sequence_path = self.dataset_path / sequence_name
+        calibration_yaml = sequence_path / 'calibration.yaml'
+        calibration_cv_yaml = sequence_path / 'calibration_cv.yaml'  # For OLD mast3rslam
         
-        yaml_content_lines = ["%YAML:1.0", ""]
+        # Get camera parameters from first rgb camera
+        if rgb and len(rgb) > 0:
+            cam = rgb[0]
+            
+            # Handle both formats: individual keys (fx, fy) and list format (focal_length)
+            focal = cam.get('focal_length', [1446.91, 1451.58])
+            fx = cam.get('fx', focal[0] if isinstance(focal, list) else 1446.91)
+            fy = cam.get('fy', focal[1] if isinstance(focal, list) and len(focal) > 1 else 1451.58)
+            
+            pp = cam.get('principal_point', [964.94, 607.07])
+            cx = cam.get('cx', pp[0] if isinstance(pp, list) else 964.94)
+            cy = cam.get('cy', pp[1] if isinstance(pp, list) and len(pp) > 1 else 607.07)
+            
+            # Handle distortion_coefficients list or individual keys
+            dist = cam.get('distortion_coefficients', [0.0, 0.0, 0.0, 0.0, 0.0])
+            k1 = cam.get('k1', dist[0] if isinstance(dist, list) else 0.0)
+            k2 = cam.get('k2', dist[1] if isinstance(dist, list) and len(dist) > 1 else 0.0)
+            p1 = cam.get('p1', dist[2] if isinstance(dist, list) and len(dist) > 2 else 0.0)
+            p2 = cam.get('p2', dist[3] if isinstance(dist, list) and len(dist) > 3 else 0.0)
+            k3 = cam.get('k3', dist[4] if isinstance(dist, list) and len(dist) > 4 else 0.0)
+            
+            model = cam.get('model', cam.get('cam_model', 'OPENCV'))
+            fps = cam.get('fps', 5.0)
+            cam_name = cam.get('cam_name', 'rgb_0')
+            cam_type = cam.get('cam_type', 'mono')
+            T_BS = cam.get('T_BS', None)
+            
+            # Get image dimensions from first image
+            w, h = 1920, 1200  # default
+            rgb_0_path = sequence_path / 'rgb_0'
+            if rgb_0_path.exists():
+                rgb_files = sorted([f for f in rgb_0_path.iterdir() 
+                                  if f.is_file() and f.suffix.lower() in ['.png', '.jpg', '.jpeg']])
+                if rgb_files:
+                    try:
+                        import cv2
+                        img = cv2.imread(str(rgb_files[0]))
+                        if img is not None:
+                            h, w = img.shape[:2]
+                    except Exception:
+                        pass
+            
+            # === Write NEW YAML 1.2 format (for droidslam, pycuvslam, orbslam2, etc.) ===
+            yaml_new_lines = ["%YAML 1.2", "---"]
+            yaml_new_lines.append(f"cam_mono: {cam_name}")
+            yaml_new_lines.append("")
+            yaml_new_lines.append("cameras:")
+            
+            # Format T_BS as string
+            if T_BS is not None:
+                import numpy as np
+                if hasattr(T_BS, 'flatten'):
+                    t_bs_list = T_BS.flatten().tolist()
+                elif isinstance(T_BS, list):
+                    t_bs_list = T_BS
+                else:
+                    t_bs_list = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+            else:
+                t_bs_list = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+            t_bs_str = ", ".join([f"{v:.10f}" if isinstance(v, float) else str(v) for v in t_bs_list])
+            
+            yaml_new_lines.append(f"  - {{cam_name: {cam_name},")
+            yaml_new_lines.append(f"     cam_type: {cam_type},")
+            yaml_new_lines.append(f"     cam_model: {model},")
+            yaml_new_lines.append(f"     focal_length: [{fx}, {fy}],")
+            yaml_new_lines.append(f"     principal_point: [{cx}, {cy}],")
+            yaml_new_lines.append(f"     distortion_coefficients: [{k1}, {k2}, {p1}, {p2}, {k3}],")
+            yaml_new_lines.append(f"     image_dimension: [{w}, {h}],")
+            yaml_new_lines.append(f"     fps: {fps},")
+            yaml_new_lines.append(f"     T_BS: [{t_bs_str}]")
+            yaml_new_lines.append(f"    }}")
+            
+            with open(calibration_yaml, 'w') as file:
+                for line in yaml_new_lines:
+                    file.write(f"{line}\n")
+            
+            # === Write OLD OpenCV FileStorage format (for mast3rslam) ===
+            yaml_cv_lines = [
+                "%YAML:1.0",
+                "---",
+                f"Camera0.model: {model}",
+                f"Camera0.fx: {fx}",
+                f"Camera0.fy: {fy}",
+                f"Camera0.cx: {cx}",
+                f"Camera0.cy: {cy}",
+                f"Camera0.k1: {k1}",
+                f"Camera0.k2: {k2}",
+                f"Camera0.p1: {p1}",
+                f"Camera0.p2: {p2}",
+                f"Camera0.k3: {k3}",
+                f"Camera0.w: {w}",
+                f"Camera0.h: {h}",
+            ]
+            
+            with open(calibration_cv_yaml, 'w') as file:
+                for line in yaml_cv_lines:
+                    file.write(f"{line}\n")
+        else:
+            # Fallback if no rgb camera provided - write both formats with defaults
+            # NEW format
+            yaml_new_lines = [
+                "%YAML 1.2", "---", "cam_mono: rgb_0", "", "cameras:",
+                "  - {cam_name: rgb_0,", "     cam_type: mono,", "     cam_model: OPENCV,",
+                "     focal_length: [1446.91, 1451.58],", "     principal_point: [964.94, 607.07],",
+                "     distortion_coefficients: [0.0, 0.0, 0.0, 0.0, 0.0],",
+                "     image_dimension: [1920, 1200],", "     fps: 5.0,",
+                "     T_BS: [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]",
+                "    }"
+            ]
+            with open(calibration_yaml, 'w') as file:
+                for line in yaml_new_lines:
+                    file.write(f"{line}\n")
+            
+            # OLD format
+            yaml_cv_lines = [
+                "%YAML:1.0", "---", "Camera0.model: OPENCV",
+                "Camera0.fx: 1446.91", "Camera0.fy: 1451.58",
+                "Camera0.cx: 964.94", "Camera0.cy: 607.07",
+                "Camera0.k1: 0.0", "Camera0.k2: 0.0",
+                "Camera0.p1: 0.0", "Camera0.p2: 0.0", "Camera0.k3: 0.0",
+                "Camera0.w: 1920", "Camera0.h: 1200",
+            ]
+            with open(calibration_cv_yaml, 'w') as file:
+                for line in yaml_cv_lines:
+                    file.write(f"{line}\n")
 
-        # Camera0 parameters (required)
-        if camera0:
-            yaml_content_lines.extend(["", "# Camera0 calibration and distortion parameters"])
-            yaml_content_lines.extend(_get_camera_yaml_section(self.dataset_path, camera0, sequence_name, self.rgb_hz, "Camera0"))
-
-        # Camera1 parameters (for stereo)
-        if camera1:
-            yaml_content_lines.extend(["", "# Camera1 calibration and distortion parameters"])
-            yaml_content_lines.extend(_get_camera_yaml_section(self.dataset_path, camera1, sequence_name, self.rgb_hz, "Camera1"))
-
-        # IMU parameters
-        if imu:
-            yaml_content_lines.extend(["", "# IMU parameters"])
-            yaml_content_lines.extend(_get_imu_yaml_section(imu))
-
-        # RGBD parameters
-        if rgbd:
-            yaml_content_lines.extend(["", "# Depth0 map parameters"])
-            yaml_content_lines.extend(_get_rgbd_yaml_section(rgbd, "Depth0"))
-        
-        # STEREO parameters
-        if stereo:
-            yaml_content_lines.extend(["", "# Stereo map parameters"])
-            yaml_content_lines.extend(_get_stereo_yaml_section(stereo))
-        
-        with open(calibration_yaml, 'w') as file:
-            for line in yaml_content_lines:
-                file.write(f"{line}\n")
-
-    def check_sequence_availability(self, sequence_name, verbose = True):
-        sequence_path = os.path.join(self.dataset_path, sequence_name)
-        if os.path.exists(sequence_path):
+    def check_sequence_availability(self, sequence_name: str, verbose: bool = True) -> str:
+        sequence_path = self.dataset_path / sequence_name
+        if sequence_path.is_dir():
             sequence_complete = self.check_sequence_integrity(sequence_name, verbose=verbose)
             if sequence_complete:
                 return "available"
@@ -152,46 +244,28 @@ class DatasetVSLAMLab:
                 return "corrupted"
         return "non-available"
 
-    def check_sequence_integrity(self, sequence_name, verbose):
-        
-        complete_sequence = True
+    def check_sequence_integrity(self, sequence_name: str, verbose: bool) -> bool:
+        sequence_path = self.dataset_path / sequence_name
 
-        sequence_path = os.path.join(self.dataset_path, sequence_name)
-        if not os.path.exists(sequence_path):
-            if verbose:
-                print(f"        The folder {sequence_path} doesn't exist !!!!!")
-            complete_sequence = False
-
-        rgb_path = os.path.join(sequence_path, 'rgb_0')
-        if not os.path.exists(rgb_path):
-            if verbose:
-                print(f"        The folder {rgb_path} doesn't exist !!!!!")
-            complete_sequence = False
-
-        rgb_csv = os.path.join(sequence_path, 'rgb.csv')
-        if not os.path.exists(rgb_csv):
-            if verbose:
-                print(f"        The file {rgb_csv} doesn't exist !!!!!")
-            complete_sequence = False
-
-        calibration_yaml = os.path.join(sequence_path, "calibration.yaml")
-        if not os.path.exists(calibration_yaml):
-            if verbose:
-                print(f"        The file {calibration_yaml} doesn't exist !!!!!")
-            complete_sequence = False
-
-        if 'mono-vi' in self.modes:
-            imu_csv = os.path.join(sequence_path, 'imu.csv')
-            if not os.path.exists(imu_csv):
-                if verbose:
-                    print(f"        The file {imu_csv} doesn't exist !!!!!")
-                complete_sequence = False
-
+        # Define requirements: (Path, Description, is_directory)
+        requirements = [
+            (sequence_path, "Sequence folder", True),
+            (sequence_path / 'rgb_0', "RGB folder", True),
+            (sequence_path / 'rgb.csv', "RGB timestamp CSV", False),
+            (sequence_path / 'calibration.yaml', "Calibration YAML", False),
+        ]
         if 'stereo' in self.modes:
-            rgb_path = os.path.join(sequence_path, 'rgb_1')
-            if not os.path.exists(rgb_path):
+            requirements.append((sequence_path / 'rgb_1', "Right RGB folder", True))
+        if 'mono-vi' in self.modes:
+            requirements.append((sequence_path / 'imu_0.csv', "IMU CSV", False))
+
+        # Check all requirements
+        complete_sequence = True
+        for path_obj, desc, should_be_dir in requirements:
+            exists = path_obj.is_dir() if should_be_dir else path_obj.is_file()
+            if not exists:
                 if verbose:
-                    print(f"        The folder {rgb_path} doesn't exist !!!!!")
+                    logger.error(f"\n{ws(4)}Missing {desc}: {path_obj} !!!!!")
                 complete_sequence = False
 
         return complete_sequence
@@ -199,35 +273,21 @@ class DatasetVSLAMLab:
     ####################################################################################################################
     # Utils
 
-    def contains_sequence(self, sequence_name_ref):
-        for sequence_name in self.sequence_names:
-            if sequence_name == sequence_name_ref:
-                return True
-        return False
+    def contains_sequence(self, sequence_name_ref: str) -> bool:
+        return sequence_name_ref in self.sequence_names
 
-    def print_sequence_names(self):
+    def print_sequence_names(self) -> None:
         print(self.sequence_names)
 
-    def print_sequence_nicknames(self):
+    def print_sequence_nicknames(self) -> None:
         print(self.sequence_nicknames)
 
-    def get_sequence_names(self):
+    def get_sequence_names(self) -> list:
         return self.sequence_names
 
-    def get_sequence_nicknames(self):
+    def get_sequence_nicknames(self) -> list:
         return self.sequence_nicknames
 
-    def get_sequence_nickname(self, sequence_name_ref):
-        for i, sequence_name in enumerate(self.sequence_names):
-            if sequence_name == sequence_name_ref:
-                return self.sequence_nicknames[i]
-
-    def get_sequence_num_rgb(self, sequence_name):
-        rgb_txt = os.path.join(self.dataset_path, sequence_name, 'rgb.txt')
-        if os.path.exists(rgb_txt):
-            with open(rgb_txt, 'r') as file:
-                line_count = 0
-                for line in file:
-                    line_count += 1
-            return line_count
-        return 0
+    def get_sequence_nickname(self, sequence_name_ref: str) -> str:
+        idx = self.sequence_names.index(sequence_name_ref)
+        return self.sequence_nicknames[idx]

@@ -1,6 +1,6 @@
 <p align="center">
 <div align="center">
-    <img src="docs/vslamlab_header.png" width="450"/>
+    <img src="docs/header.png" width="500"/>
 </div>
 
 <h3 align="center"> A Comprehensive Framework for Visual SLAM Baselines and Datasets</h3> 
@@ -17,6 +17,8 @@
      <a href="https://www.linkedin.com/in/somayeh-hussaini/?originalSubdomain=au"><strong>Somayeh Hussaini</strong></a>
     ·
      <a href="https://github.com/TedVanderfeen"><strong>Ted Vanderfeen </strong></a>
+    ·
+     <a href="https://scholar.google.com/citations?hl=es&user=s3eIy0YAAAAJ"><strong>Beverley Gorry </strong></a>
     ·
     <a href="https://scholar.google.com/citations?user=j_sMzokAAAAJ&hl=en"><strong>Javier Civera</strong></a>
     ·
@@ -66,25 +68,20 @@ git clone https://github.com/alejandrofontan/VSLAM-LAB.git && cd VSLAM-LAB
 ## Quick Demo
 You can now execute any baseline on any sequence from any dataset within VSLAM-LAB using the following command:
 ```
-pixi run demo <baseline> <dataset> <sequence>
+pixi run demo <baseline> <dataset> <sequence> <mode>
 ```
 For a full list of available systems and datasets, see the [VSLAM-LAB Supported Baselines and Datasets](#vslam-lab-supported-baselines-and-datasets).
 Example commands:
 ```
-pixi run demo mast3rslam eth table_3
-pixi run demo droidslam euroc MH_01_easy
-pixi run demo orbslam2 rgbdtum rgbd_dataset_freiburg1_xyz
+pixi run demo mast3rslam eth table_3 mono
+pixi run demo droidslam rgbdtum rgbd_dataset_freiburg1_xyz rgbd
+pixi run demo orbslam2 kitti 04 stereo
+pixi run pycuvslam euroc MH_01_easy stereo-vi
 ```
 *To change the paths where VSLAM-LAB-Benchmark or/and VSLAM-LAB-Evaluation data are stored (for example, to /media/${USER}/data), use the following commands:*
 ```
 pixi run set-benchmark-path /media/${USER}/data
 pixi run set-evaluation-path /media/${USER}/data
-```
-## VSLAM-LAB Info Functions
-```bash
-pixi run baseline-info <baseline>
-pixi run print-baselines
-pixi run print-datasets
 ```
 
 ## Configure your own experiments
@@ -119,31 +116,17 @@ monotum:
 ```
 For a full list of available VSLAM systems and datasets, refer to the section [VSLAM-LAB Supported Baselines and Datasets](#vslam-lab-supported-baselines-and-datasets).
 
-## VSLAM-LAB Pipeline Functions
-Instead of running the full VSLAM-LAB pipeline, you can interact with datasets and baselines using the commands below:
+## VSLAM-LAB Pipeline Commands
+In addition to running the full automated pipeline, **VSLAM-LAB** provides modular commands to interact directly with datasets and baselines. For a comprehensive list of all available commands consult [Wiki: Comand‐line Interface](https://github.com/VSLAM-LAB/VSLAM-LAB/wiki/Comand%E2%80%90line-Interface)
 
 ```bash
-pixi run validate-experiment-yaml <exp_yaml>             # Example: pixi run validate-experiment-yaml configs/exp_vslamlab.yaml
-pixi run overwrite-exp <exp_yaml>                        # Example: pixi run overwrite-exp configs/exp_vslamlab.yaml
-pixi run update-experiment-csv-logs <exp_yaml>           # Example: pixi run update-experiment-csv-logs configs/exp_vslamlab.yaml
-
-pixi run check-experiment-resources <exp_yaml>           # Example: pixi run check-experiment-resources configs/exp_vslamlab.yaml
-pixi run get-experiment-resources <exp_yaml>             # Example: pixi run get-experiment-resources configs/exp_vslamlab.yaml
-
-pixi run check-experiment-state <exp_yaml>               # Example: pixi run check-experiment-state configs/exp_vslamlab.yaml
-
 pixi run install-baseline <baseline>                     # Example: pixi run install-baseline droidslam
-pixi run install-baselines <baseline1> <baseline2> ...   # Example: pixi run install-baselines droidslam orbslam2
-
-pixi run download-sequence <dataset> <sequence>          # Example: pixi run download-sequence eth table_3
-pixi run download-sequences <dataset1> <sequence1> <dataset2> <sequence2> ... \
-                                                         # Example: pixi run download-sequences eth table_3 rgbdtum rgbd_dataset_freiburg1_xyz
-pixi run download-dataset <dataset>                      # Example: pixi run download-dataset eth
-pixi run download-datasets <dataset1> <dataset2>         # Example: pixi run download-datasets eth rgbdtum
-
+pixi run download-sequence <dataset> <sequence>          # Example: pixi run download-sequence eth table_3 
 pixi run run-exp <exp_yaml>                              # Example: pixi run run-exp configs/exp_vslamlab.yaml
 pixi run evaluate-exp <exp_yaml>                         # Example: pixi run evaluate-exp configs/exp_vslamlab.yaml
 pixi run compare-exp <exp_yaml>                          # Example: pixi run compare-exp configs/exp_vslamlab.yaml
+<<<<<<< HEAD
+=======
 pixi run eval-metrics <exp_yaml>                         # Example: pixi run eval-metrics configs/exp_vslamlab.yaml
 pixi run eval-metrics-single <config_yaml>              # Example: pixi run eval-metrics-single configs/single_lightning.yaml
 pixi run demo-single <config_yaml>                      # Example: pixi run demo-single configs/single_lightning.yaml
@@ -187,6 +170,9 @@ pixi run eval-metrics configs/exp_lightning.yaml
 
 This will generate `metrics.json` files for all sequences in the experiment, which can be used by optimization frameworks or other tools that require standardized SLAM metrics.
 
+<<<<<<< HEAD
+>>>>>>> cbcaad3 (Add eval-metrics command to evaluate SLAM experiments and generate metrics.json files; update README with usage instructions and enhance trajectory CSV reading in utilities.py.)
+=======
 ### eval-metrics-single Command
 
 The `eval-metrics-single` command runs SLAM and evaluation for a single sequence from a custom dataset location. This is useful when you have data in a non-standard location (e.g., from a Streamlit app or custom processing pipeline) and want to quickly evaluate a single sequence without setting up a full experiment.
@@ -283,6 +269,9 @@ This will:
 
 **Note:** The command automatically suppresses GUI output when running SLAM, making it suitable for headless environments and batch processing.
 
+<<<<<<< HEAD
+>>>>>>> d0409bd (Update README to include new eval-metrics-single command details, usage instructions, and configuration file format for single sequence evaluation from custom datasets.)
+=======
 ### demo-single Command
 
 The `demo-single` command runs SLAM with live GUI enabled for a single sequence from a custom dataset location. This is useful when you have data in a non-standard location and want to run SLAM interactively with visual feedback, similar to `pixi run demo` but using the single-config format.
@@ -338,50 +327,26 @@ This will:
 
 **Note:** Unlike `eval-metrics-single`, this command runs with GUI enabled, making it suitable for interactive use and debugging. For headless batch processing and metrics generation, use `eval-metrics-single` instead.
 
+>>>>>>> f4ccb6d (feat: Add `demo-single` command to run single-sequence SLAM with live GUI enabled from a configuration file.)
 ```
 
-## Add a new dataset
+## Add a new VSLAM Dataset
 
-Datasets in **VSLAM-LAB** are stored in a folder named **VSLAM-LAB-Benchmark**, which is created by default in the same parent directory as **VSLAM-LAB**.
+Expand the evaluation suite by integrating custom datasets. Follow the instructions in [Wiki: Integrate a new VSLAM Dataset](https://github.com/VSLAM-LAB/VSLAM-LAB/wiki/Integrate-a-new-VSLAM-Dataset).
 
-1. To add a new dataset, structure your dataset as follows:
-```
-~/VSLAM-LAB-Benchmark
-└── YOUR_DATASET
-    └── sequence_01
-        ├── rgb_0
-            └── img_01
-            └── img_02
-            └── ...
-        ├── calibration.yaml
-        ├── rgb.csv
-        └── groundtruth.csv
-    └── sequence_02
-        ├── ...
-    └── ...   
-```
+## Add a new VSLAM Baseline
 
-2. Derive a new class **dataset_{your_dataset}.py** for your dataset from  **~/VSLAM-LAB/Datasets/Dataset_vslamlab.py**, and create a corresponding YAML configuration file named **dataset_{your_dataset}.yaml**.
-	
-3. Include the call for your dataset in function *def get_dataset(...)* in **~/VSLAM-LAB/Datasets/get_dataset.py**
-```
- from Datasets.dataset_{your_dataset} import {YOUR_DATASET}_dataset
-    ...
- def get_dataset(dataset_name, benchmark_path)
-    ...
-    switcher = {
-        "rgbdtum": lambda: RGBDTUM_dataset(benchmark_path),
-        ...
-        "dataset_{your_dataset}": lambda: {YOUR_DATASET}_dataset(benchmark_path),
-    }
-```
+Incorporate new algorithms into the framework. Follow the guide in [Wiki: Integrate a new VSLAM Baseline](https://github.com/VSLAM-LAB/VSLAM-LAB/wiki/Integrate-a-new-VSLAM-Baseline). Benchmark your method against state-of-the-art baselines across all supported datasets.
+
+For a reference implementation, see the VGGT-SLAM integration in commit [259f7ae](https://github.com/VSLAM-LAB/VSLAM-LAB/commit/259f7aec88d4576880f3cc98983660f508af13a9).
+
 
 ## License
 **VSLAM-LAB** is released under a **LICENSE.txt**. For a list of code dependencies which are not property of the authors of **VSLAM-LAB**, please check **docs/Dependencies.md**.
 
 
 ## Citation
-If you're using **VSLAM-LAB** in your research, please cite. If you're specifically using VSLAM systems or datasets that have been included, please cite those as well. We provide a [spreadsheet](https://docs.google.com/spreadsheets/d/1V8_TLqlccipJ6x_TXkgLsw9zWszHU9M-0mGgDT92TEs/edit?usp=drive_link) with citation for each dataset and VSLAM system for your convenience.
+If you're using **VSLAM-LAB** in your research, please cite:
 ```bibtex
 @article{fontan2025vslam,
   title={VSLAM-LAB: A Comprehensive Framework for Visual SLAM Methods and Datasets},
@@ -396,44 +361,65 @@ If you're using **VSLAM-LAB** in your research, please cite. If you're specifica
 To [awesome-slam-datasets](https://github.com/youngguncho/awesome-slam-datasets) -->
 
 # VSLAM-LAB Supported Baselines and Datasets
-We provide a [spreadsheet](https://docs.google.com/spreadsheets/d/1V8_TLqlccipJ6x_TXkgLsw9zWszHU9M-0mGgDT92TEs/edit?usp=drive_link) with more detailed information for each baseline and dataset.
-
 | Baselines                                                                   | System |     Sensors      |                                   License                                   |    Label     |  Conda Pkg     |  Camera Models     |  
 |:----------------------------------------------------------------------------|:------:|:------:|:----------------:|:---------------------------------------------------------------------------:|:------------:|:------------:|
-| [**MASt3R-SLAM**](https://github.com/rmurai0610/MASt3R-SLAM)                | VSLAM  |       `mono`       |    [CC BY-NC-SA 4.0](https://github.com/rmurai0610/MASt3R-SLAM/blob/main/LICENSE.md)    | `mast3rslam`  | ✅ | `Pinhole` |
-| [**DPVO**](https://github.com/princeton-vl/DPVO)                            | VSLAM  |       `mono`       |    [License](https://github.com/princeton-vl/DPVO/blob/main/LICENSE)    | `dpvo`  | ✅ | `Pinhole` |
-| [**DROID-SLAM**](https://github.com/princeton-vl/DROID-SLAM)                | VSLAM  |`mono` `rgbd` `stereo`|    [BSD-3](https://github.com/princeton-vl/DROID-SLAM/blob/main/LICENSE)    | `droidslam`  | ✅ | `Pinhole` |
-| [**ORB-SLAM2**](https://github.com/alejandrofontan/ORB_SLAM2)               | VSLAM  |`mono` `rgbd` `stereo`| [GPLv3](https://github.com/raulmur/ORB_SLAM2/blob/master/LICENSE.txt)|  `orbslam2`  | ✅ | `Pinhole` |
-| [**PyCuVSLAM**](https://github.com/VSLAM-LAB/PyCuVSLAM/tree/main) | VSLAM  |`rgbd`| [NVIDIA](https://github.com/VSLAM-LAB/PyCuVSLAM/blob/main/LICENSE) |  `pycuvslam`  | ✅ | `Pinhole` |
-| [**MonoGS**](https://github.com/muskie82/MonoGS)                            | VSLAM  | ⛔ |     [License](https://github.com/muskie82/MonoGS?tab=License-1-ov-file)     |   `monogs`   | ⛔ | `Pinhole` |
-| [**AnyFeature-VSLAM**](https://github.com/alejandrofontan/AnyFeature-VSLAM) | VSLAM  | `mono` | [GPLv3](https://github.com/alejandrofontan/VSLAM-LAB/blob/main/LICENSE.txt) | `anyfeature` | ✅ | `Pinhole` |
-| [**DSO**](https://github.com/alejandrofontan/dso)                           |   VO   | ⛔ |        [GPLv3](https://github.com/JakobEngel/dso/blob/master/LICENSE)        |    `dso`     | ⛔ | `Pinhole` | 
-| [**ORB-SLAM3**](https://github.com/UZ-SLAMLab/ORB_SLAM3)               | VSLAM  | `mono-vi` |    [GPLv3](https://github.com/UZ-SLAMLab/ORB_SLAM3/blob/master/LICENSE)    |  `orbslam3`  | ✅ | `Pinhole` |
-| [**OKVIS2**](https://github.com/ethz-mrl/okvis2)               | VSLAM  | `mono-vi` |    [BSD-3](https://github.com/ethz-mrl/okvis2/blob/main/LICENSE)    |  `okvis2`  | ✅ | `Pinhole` |
-| [**GLOMAP**](https://lpanaf.github.io/eccv24_glomap/)                       |  SfM   |       `mono`       |         [BSD-3](https://github.com/colmap/glomap/blob/main/LICENSE)         |   `glomap`   | ✅ | `Pinhole` |
-| [**COLMAP**](https://colmap.github.io/)                                     |  SfM   |       `mono`       |                [BSD](https://colmap.github.io/license.html)                 |   `colmap`   | ✅ | `Pinhole` |
-| [**GenSfM**](https://github.com/Ivonne320/GenSfM)                                     |  SfM   |       ⛔       |                [BSD](https://github.com/Ivonne320/GenSfM/blob/main/COPYING.txt)                 |   `gensfm`   | ⛔ | `Pinhole` | 
+| [**VGGT-SLAM**](https://github.com/MIT-SPARK/VGGT-SLAM) |  VSLAM   |  `mono`  |  [BSD-2](https://github.com/MIT-SPARK/VGGT-SLAM/blob/main/LICENSE)  |   `vggtslam`   | ✅ | `pinhole` |
+| [**MASt3R-SLAM**](https://github.com/rmurai0610/MASt3R-SLAM)                | VSLAM  |       `mono`       |    [CC BY-NC-SA 4.0](https://github.com/rmurai0610/MASt3R-SLAM/blob/main/LICENSE.md)    | `mast3rslam`  | ✅ | `radtan5` `unknown` |
+| [**DPVO**](https://github.com/princeton-vl/DPVO)                            | VSLAM  |       `mono`       |    [License](https://github.com/princeton-vl/DPVO/blob/main/LICENSE)    | `dpvo`  | ✅ | `radtan5` |
+| [**DROID-SLAM**](https://github.com/princeton-vl/DROID-SLAM)                | VSLAM  |`mono` `rgbd` `stereo`|    [BSD-3](https://github.com/princeton-vl/DROID-SLAM/blob/main/LICENSE)    | `droidslam`  | ✅ | `radtan5` |
+| [**ORB-SLAM2**](https://github.com/alejandrofontan/ORB_SLAM2)               | VSLAM  |`mono` `rgbd` `stereo`| [GPLv3](https://github.com/raulmur/ORB_SLAM2/blob/master/LICENSE.txt)|  `orbslam2`  | ✅ | `radtan5`  |
+| [**MonoGS**](https://github.com/muskie82/MonoGS)                            | VSLAM  | `mono` `rgbd` |     [License](https://github.com/muskie82/MonoGS?tab=License-1-ov-file)     |   `monogs`   | ✅ | `radtan5` |
+| [**AnyFeature-VSLAM**](https://github.com/alejandrofontan/AnyFeature-VSLAM) | VSLAM  | `mono` | [GPLv3](https://github.com/alejandrofontan/VSLAM-LAB/blob/main/LICENSE.txt) | `anyfeature` | ✅ |  `radtan5` |
+| **----------** | **-------** | **-------** | **----------** | **--------** | **---** | **----------** |
+| [**PyCuVSLAM**](https://github.com/VSLAM-LAB/PyCuVSLAM/tree/main) | VSLAM  |`mono` `rgbd` `stereo(-vi)` | [NVIDIA](https://github.com/VSLAM-LAB/PyCuVSLAM/blob/main/LICENSE) |  `pycuvslam`  | ➖ | `radtan5` `equid4` |
+| [**ORB-SLAM3**](https://github.com/UZ-SLAMLab/ORB_SLAM3)               | VSLAM  | `mono(-vi)` `rgbd(-vi)` `stereo(-vi)` |    [GPLv3](https://github.com/UZ-SLAMLab/ORB_SLAM3/blob/master/LICENSE)    |  `orbslam3`  | ✅ | `radtan5` `equid4`|
+| [**OKVIS2**](https://github.com/ethz-mrl/okvis2)               | VSLAM  | `mono-vi` |    [BSD-3](https://github.com/ethz-mrl/okvis2/blob/main/LICENSE)    |  `okvis2`  | ✅ | `radtan5` `equid4` |
+| **----------** | **-------** | **-------** | **----------** | **--------** | **---** | **----------** |
+| [**GLOMAP**](https://lpanaf.github.io/eccv24_glomap/)                       |  SfM   |       `mono`       |         [BSD-3](https://github.com/colmap/glomap/blob/main/LICENSE)         |   `glomap`   | ✅ | `radtan5` `equid4` `unknown` |
+| [**COLMAP**](https://colmap.github.io/)                                     |  SfM   |       `mono`       |                [BSD](https://colmap.github.io/license.html)                 |   `colmap`   | ✅ | `radtan5` `equid4` `unknown` |
+| [**VGGT**](https://colmap.github.io/) |  SfM   |  `mono`  |  [VGGT](https://github.com/facebookresearch/vggt/blob/main/LICENSE.txt)  |   `vggt`   | ➖ | `pinhole` |
+
+| Datasets                                                                                                                        | Features |   Label    |     Sensors      |  Camera Models     |        
+|:--------------------------------------------------------------------------------------------------------------------------------|:---------:|:-----------:|:----------:|:----------:|
+| [**ETH3D SLAM Benchmarks**](https://www.eth3d.net/slam_datasets)                                                                |  📸🏠🤳 |   `eth`    |`mono` `rgbd`| `pinhole` |
+| [**RGB-D SLAM Dataset and Benchmark**](https://cvg.cit.tum.de/data/datasets/rgbd-dataset)                                       |  📸🏠🤳 |  `rgbdtum`  |`mono` `rgbd`| `radtan5` |
+| [**The KITTI Vision Benchmark Suite**](https://www.cvlibs.net/datasets/kitti/eval_odometry.php)                                 |  📸🏞️🚗 |   `kitti`   |`mono` `stereo` | `pinhole` |
+| [**The EuRoC MAV Dataset**](https://projects.asl.ethz.ch/datasets/doku.php?id=kmavvisualinertialdatasets)                       |  📸🏞️🚁 |   `euroc`   | `mono(-vi)` `stereo(-vi)` | `radtan4` |
+| [**The Replica Dataset**](https://github.com/facebookresearch/Replica-Dataset) - [**iMAP**](https://edgarsucar.github.io/iMAP/) |  💻🏠🤳 |  `replica`  | `mono` `rgbd`  | `pinhole` |
+| [**TartanAir: A Dataset to Push the Limits of Visual SLAM**](https://theairlab.org/tartanair-dataset/)                          |  💻🏞️🤳 | `tartanair` | `mono`  | `pinhole` |
+| [**ICL-NUIM RGB-D Benchmark Dataset**](https://www.doc.ic.ac.uk/~ahanda/VaFRIC/iclnuim.html)                                    |  💻🏠🤳 |   `nuim`    | `mono` `rgbd`  | `pinhole` | 
+| [**RGB-D Dataset 7-Scenes**](https://www.microsoft.com/en-us/research/project/rgb-d-dataset-7-scenes/)                          |  📸🏠🤳 |   `7scenes` | `mono` `rgbd`  | `pinhole` |
+| [**OpenLORIS-Scene Dataset**](https://lifelong-robotic-vision.github.io/dataset/scene.html) |  📸🏠🤳 |   `openloris-d400/t265` | `mono(-vi)` `rgbd(-vi)` `stereo(-vi)`  | `pinhole` `equid4` |
+| [**Monado SLAM Dataset - Valve Index**](https://huggingface.co/datasets/collabora/monado-slam-datasets)                         |  📸🏠🥽 | `msd` | `mono(-vi)` `stereo(-vi)` | `equid4` |
+| [**ROVER: A Multiseason Dataset for Visual SLAM**](https://iis-esslingen.github.io/rover/)   | 📸🏞️🚗 | `rover-picam/d435i/t265` |`mono(-vi)` `rgbd` `stereo(-vi)` | `radtan5` `equid4` |
+| [**The UT Campus Object Dataset**](https://amrl.cs.utexas.edu/coda/) | 📸🏞️🤖 |  `ut-coda`  |`mono` `stereo`| `radtan5` |
+| [**Sesoko campaign**](https://www.southampton.ac.uk/smmi/news/2017/06/20-southampton-tokyo-collaboration.page) | 📸🏞️🌊 |    `sesoko`    |`mono` | `pinhole` |
+
+Real / Synthetic : 📸 / 💻 
+
+Indoor / Outdoor : 🏠 / 🏞️ 
+
+Handheld / Headmounted / Vehicle / UAV  / Robot / AUV :🤳 / 🥽 / 🚗 / 🚁 / 🤖 / 🌊
 
 
-| Datasets                                                                                                                        |   Data    |    Mode    |    Label    |     Sensors      |  Camera Models     |        
-|:--------------------------------------------------------------------------------------------------------------------------------|:---------:|:----------:|:-----------:|:----------:|:----------:|
-| [**ETH3D SLAM Benchmarks**](https://www.eth3d.net/slam_datasets)                                                                |   real    |  handheld  |    `eth`    |`mono` `rgbd`| `Pinhole` |
-| [**RGB-D SLAM Dataset and Benchmark**](https://cvg.cit.tum.de/data/datasets/rgbd-dataset)                                       |   real    |  handheld  |  `rgbdtum`  |`mono` `rgbd`| `Pinhole` |
-| [**The KITTI Vision Benchmark Suite**](https://www.cvlibs.net/datasets/kitti/eval_odometry.php)                                 |   real    |  vehicle   |   `kitti`   |`mono`| `Pinhole` |
-| [**The EuRoC MAV Dataset**](https://projects.asl.ethz.ch/datasets/doku.php?id=kmavvisualinertialdatasets)                       |   real    |    UAV     |   `euroc`   | `mono`,`stereo`, `mono-vi` | `Pinhole` |
-| [**ROVER: A Multiseason Dataset for Visual SLAM**](https://iis-esslingen.github.io/rover/)   |   real    | vehicle |  `rover`  |`mono` `rgbd` | `Pinhole` |
-| [**The UT Campus Object Dataset**](https://amrl.cs.utexas.edu/coda/) | real | handheld |  `ut_coda`  |`mono`| `Pinhole` |
-| [**The Replica Dataset**](https://github.com/facebookresearch/Replica-Dataset) - [**iMAP**](https://edgarsucar.github.io/iMAP/) | synthetic |  handheld  |  `replica`  | `mono` `rgbd`  | `Pinhole` |
-| [**TartanAir: A Dataset to Push the Limits of Visual SLAM**](https://theairlab.org/tartanair-dataset/)                          | synthetic |  handheld  | `tartanair` | `mono`  | `Pinhole` |
-| [**ICL-NUIM RGB-D Benchmark Dataset**](https://www.doc.ic.ac.uk/~ahanda/VaFRIC/iclnuim.html)                                    | synthetic |  handheld  |   `nuim`    | `mono` `rgbd`  | `Pinhole` | 
-| [**Monocular Visual Odometry Dataset**](https://cvg.cit.tum.de/data/datasets/mono-dataset)                                      |   real    |  handheld  |  `monotum`  | ⛔  | `Pinhole` |
-| [**RGB-D Dataset 7-Scenes**](https://www.microsoft.com/en-us/research/project/rgb-d-dataset-7-scenes/)                          |   real    |  handheld  |  `7scenes`  | ⛔  | `Pinhole` |
+<!--| [**Monocular Visual Odometry Dataset**](https://cvg.cit.tum.de/data/datasets/mono-dataset)                                      |   real    |  handheld  |  `monotum`  | ⛔  | `Pinhole` |
 | [**The Drunkard's Dataset**](https://davidrecasens.github.io/TheDrunkard%27sOdometry)                                           | synthetic |  handheld  | `drunkards` | ⛔  | `Pinhole` |
 | [**Hamlyn Rectified Dataset**](https://davidrecasens.github.io/EndoDepthAndMotion/)                                             |   real    |  handheld  |  `hamlyn`   | ⛔  | `Pinhole` |
 | [**Underwater caves sonar and vision data set**](https://cirs.udg.edu/caves-dataset/)                                           |   real    | underwater |   `caves`  | ⛔  | `Pinhole` |
 | [**HILTI-OXFORD 2022**](http://hilti-challenge.com/dataset-2022.html)   |   real    | handheld |  `hilti2022`  | ⛔  | `Pinhole` |
-| [**Monado SLAM Dataset - Valve Index**](https://huggingface.co/datasets/collabora/monado-slam-datasets)                         |   real    | headmounted | `msdmi` | `mono`, `mono-vi` | `Pinhole` |
+-->
 
+## VSLAM-LAB  Roadmap
+### Baselines
+- [ ] Extend `orbslam3` and `orbslam3-dev` to `rgbd-vi`
+- [ ] Extend `okvis2` and `okvis2-dev` to `rgbd-vi` and `stereo-vi`
+
+### Datasets
+- [ ] Implement `monotum`
+- [ ] Implement `drunkards`
+- [ ] Implement `hamlyn`
+- [ ] Implement `caves`
+- [ ] Implement `hilti2022`
 <!--
 ## VSLAM-LAB v1.0 Roadmap
 

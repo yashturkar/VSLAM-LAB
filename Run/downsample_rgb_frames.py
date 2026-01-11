@@ -39,9 +39,29 @@ def get_rows(rows_idx, rgb_csv):
 def downsample_rgb_frames(rgb_csv, max_rgb_count, min_fps, verbose=False):
 
     csv_path = Path(rgb_csv)  
-    df = pd.read_csv(csv_path)     
-    rgb_paths = df['path_rgb0'].to_list()
-    rgb_timestamps = df['ts_rgb0 (s)'].to_list()
+    df = pd.read_csv(csv_path)
+    
+    # Handle multiple column name formats for compatibility
+    path_col = None
+    ts_col = None
+    for col in ['path_rgb_0', 'path_rgb0']:
+        if col in df.columns:
+            path_col = col
+            break
+    for col in ['ts_rgb_0 (s)', 'ts_rgb0 (s)', 'ts_rgb_0 (ns)', 'ts_rgb0 (ns)']:
+        if col in df.columns:
+            ts_col = col
+            break
+    
+    if path_col is None or ts_col is None:
+        raise KeyError(f"Required columns not found in {rgb_csv}. Available: {list(df.columns)}")
+    
+    rgb_paths = df[path_col].to_list()
+    rgb_timestamps = df[ts_col].to_list()
+    
+    # Detect if timestamps are in nanoseconds (> 1e15) or seconds
+    is_nanoseconds = rgb_timestamps[0] > 1e15 if rgb_timestamps else False
+    
     rows = df.to_dict(orient="records")
 
     # Determine downsampling parameters
@@ -51,7 +71,9 @@ def downsample_rgb_frames(rgb_csv, max_rgb_count, min_fps, verbose=False):
         print(f"  Maximum number of RGB images: {max_rgb_count}")
         print(f"  Minimum FPS: {min_fps:.1f} Hz")
 
-    sequence_duration = rgb_timestamps[-1] - rgb_timestamps[0]
+    # Convert timestamps to seconds for duration calculations
+    time_divisor = 1e9 if is_nanoseconds else 1.0
+    sequence_duration = (rgb_timestamps[-1] - rgb_timestamps[0]) / time_divisor
     actual_fps = len(rgb_paths) / sequence_duration
     max_interval = 1.0 / min_fps
     min_interval = sequence_duration / max_rgb_count
@@ -77,7 +99,7 @@ def downsample_rgb_frames(rgb_csv, max_rgb_count, min_fps, verbose=False):
         downsampled_paths, downsampled_timestamps, downsampled_rows = downsample_rgb(rgb_timestamps, rgb_paths, rows, step_size, max_rgb_count)
 
 
-    downsampled_duration = downsampled_timestamps[-1] - downsampled_timestamps[0]
+    downsampled_duration = (downsampled_timestamps[-1] - downsampled_timestamps[0]) / time_divisor
     downsampled_fps = len(downsampled_paths) / downsampled_duration
 
     if verbose:
