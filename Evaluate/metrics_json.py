@@ -277,11 +277,26 @@ def generate_metrics_json(exp, dataset, sequence_name, exp_it, status="SUCCESS")
     if trajectory_metrics:
         if "trajectory_length" in trajectory_metrics:
             metrics["trajectory_length"] = trajectory_metrics["trajectory_length"]
-        if "length_ratio" in trajectory_metrics:
-            metrics["length_ratio"] = trajectory_metrics["length_ratio"]
         if "gt_trajectory_length" in trajectory_metrics:
             metrics["gt_trajectory_length"] = trajectory_metrics["gt_trajectory_length"]
-    
+        
+        # Calculate symmetric coverage (penalize overshooting)
+        # Using existing key "length_ratio" for Coverage to maintain schema compatibility
+        if "trajectory_length" in trajectory_metrics and "gt_trajectory_length" in trajectory_metrics:
+            pred_len = trajectory_metrics["trajectory_length"]
+            gt_len = trajectory_metrics["gt_trajectory_length"]
+            if gt_len > 0:
+                diff = abs(pred_len - gt_len)
+                metrics["length_ratio"] = max(0.0, 1.0 - diff / gt_len)
+            else:
+                metrics["length_ratio"] = 0.0
+        elif "length_ratio" in trajectory_metrics:
+            # Fallback if specific lengths aren't available but ratio is
+            metrics["length_ratio"] = trajectory_metrics["length_ratio"]
+            # TODO: Add tests and remove this print statement
+            print ("Using length_ratio from trajectory metrics, THIS IS A FALLBACK")
+
+
     # Calculate weighted_rmse = RMSE / C^2 where C is coverage (length_ratio)
     if metrics["rmse"]["translation"] is not None and metrics["length_ratio"] is not None:
         if metrics["length_ratio"] > 0:
