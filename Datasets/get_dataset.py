@@ -14,6 +14,7 @@ from Datasets.dataset_files.dataset_hamlyn import HamlynDataset
 from Datasets.dataset_files.dataset_scannetplusplus import ScannetplusplusDataset
 from Datasets.dataset_files.dataset_caves import CavesDataset
 from Datasets.dataset_files.dataset_eiffel_tower import EiffelTowerDataset
+from Datasets.dataset_files.dataset_lightning import LightningDataset
 
 # RGBD datasets
 from Datasets.dataset_files.dataset_eth import EthDataset
@@ -84,6 +85,7 @@ def get_dataset(dataset_name):
         "caves": lambda: CavesDataset(),
         "vitum": lambda: VitumDataset(),
         "eiffel-tower": lambda: EiffelTowerDataset(),
+        "lightning": lambda: LightningDataset(),
 
         # Development
         "videos": lambda: VideosDataset(),

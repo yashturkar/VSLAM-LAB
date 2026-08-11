@@ -9,9 +9,12 @@ Compare/__pycache__/
 
 # pixi environments
 .pixi
+.pixi.local-backup-*
+.vslamlab-storage
 
 # Baselines
 Baselines/*.txt*
+Baselines/*.local-backup-*
 Baselines/DROID-SLAM
 Baselines/DROID-SLAM-DEV
 Baselines/MASt3R-SLAM

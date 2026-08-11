@@ -28,6 +28,7 @@ from huggingface_hub import hf_hub_download
 
 from utilities import ws, print_msg
 from path_constants import VSLAMLAB_BASELINES, TRAJECTORY_FILE_NAME, VSLAMLAB_VERBOSITY, VerbosityManager
+from shared_storage import link_existing_shared_baseline, relocate_baseline
 
 SCRIPT_LABEL = f"\033[95m[{Path(__file__).name}]\033[0m "
 
@@ -62,6 +63,7 @@ class BaselineVSLAMLAB(ABC):
     def is_installed(self) -> bool: ...
 
     def is_cloned(self) -> bool:
+        link_existing_shared_baseline(self.baseline_path)
         return (self.baseline_path / '.git').is_dir()
 
     def git_clone(self) -> None:
@@ -77,7 +79,10 @@ class BaselineVSLAMLAB(ABC):
         with open(log_file_path, 'w') as log_file:
             print(f"\n{SCRIPT_LABEL}git clone {self.label}\033[0m : {self.baseline_path}")
             print(f"{ws(6)} log file: {log_file_path}")
-            subprocess.run(git_clone_command, shell=True, stdout=log_file, stderr=log_file)
+            result = subprocess.run(git_clone_command, shell=True, stdout=log_file, stderr=log_file)
+        if result.returncode != 0 or not (self.baseline_path / '.git').is_dir():
+            raise RuntimeError(f"Failed to clone {self.baseline_name}; see {log_file_path}")
+        relocate_baseline(self.baseline_path)
 
     ####################################################################################################################
     # Auxiliary methods

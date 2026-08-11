@@ -16,6 +16,10 @@ platforms = [
 [tasks]
 clean-swap = { cmd = "sudo /sbin/swapoff -a && sudo /sbin/swapon -a" }
 kill-all = { cmd = "pkill -f -e 'droidslam|dpvo|mast3rslam|monogs|orbslam2|orbslam3|anyfeature|okvis2|colmap|vpr-lab|vggt|pycuvslam|vslamlab' && sudo /sbin/swapoff -a && sudo /sbin/swapon -a" }
+setup-storage = "python Utilities/setup_shared_storage.py"
+
+[activation]
+scripts = ["scripts/activate_shared_storage.sh"]
 
 [environments]
 vslamlab = { features = ["vslamlab", "development"] }
@@ -79,6 +83,21 @@ evaluate.args = [
 compare.cmd = "python vslamlab_gui.py compare_exp {{ exp_yaml }}"
 compare.args = [
   { "arg" = "exp_yaml", "default" = "configs/exp_debug.yaml" }
+]
+
+eval-metrics.cmd = "python vslamlab_gui.py eval_metrics {{ exp_yaml }}"
+eval-metrics.args = [
+  { "arg" = "exp_yaml", "default" = "configs/exp_debug.yaml" }
+]
+
+eval-metrics-single.cmd = "python vslamlab_gui.py eval_metrics_single {{ config_yaml }}"
+eval-metrics-single.args = [
+  { "arg" = "config_yaml", "default" = "configs/single_lightning.yaml" }
+]
+
+demo-single.cmd = "python vslamlab_gui.py demo_single {{ config_yaml }}"
+demo-single.args = [
+  { "arg" = "config_yaml", "default" = "configs/single_lightning.yaml" }
 ]
 
 get-resources.cmd = "python vslamlab_gui.py get-resources {{ exp_yaml }}"

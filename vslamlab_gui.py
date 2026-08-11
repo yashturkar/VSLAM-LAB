@@ -3,7 +3,8 @@ import os, sys
 from vslamlab_utilities import baseline_info, print_datasets, print_baselines, validate_experiment_yaml, overwrite_exp
 from vslamlab_utilities import update_experiment_csv_logs, check_experiment_resources, get_experiment_resources, check_experiment_state
 from vslamlab_utilities import install_baseline, install_baselines, download_sequence, download_sequences, download_dataset, download_datasets
-from vslamlab_utilities import run_exp, evaluate_exp, compare_exp, write_demo_yaml_fles
+from vslamlab_utilities import run_exp, evaluate_exp, compare_exp, eval_metrics, write_demo_yaml_fles
+from Run.single_sequence import demo_single, eval_metrics_single
 from path_constants import VSLAM_LAB_DIR
 
 SCRIPT_LABEL = f"\033[95m[{os.path.basename(__file__)}]\033[0m "
@@ -84,7 +85,7 @@ if __name__ == "__main__":
             update_experiment_csv_logs(exp_yaml)
             get_experiment_resources(exp_yaml)
             check_experiment_state(exp_yaml)   
-            run_exp(exp_yaml) 
+            run_exp(exp_yaml)
 
         if function_name == "evaluate_exp":
             exp_yaml = sys.argv[2]
@@ -98,6 +99,20 @@ if __name__ == "__main__":
             exp_yaml = sys.argv[2]
             compare_exp(exp_yaml) 
 
+        if function_name == "eval_metrics":
+            exp_yaml = sys.argv[2]
+            validate_experiment_yaml(exp_yaml)
+            update_experiment_csv_logs(exp_yaml)
+            get_experiment_resources(exp_yaml)
+            check_experiment_state(exp_yaml)
+            eval_metrics(exp_yaml)
+
+        if function_name == "eval_metrics_single":
+            eval_metrics_single(sys.argv[2])
+
+        if function_name == "demo_single":
+            demo_single(sys.argv[2])
+
         # VSLAM-LAB main pipeline    
         if function_name == "vslamlab":
             exp_yaml = sys.argv[2]
@@ -110,7 +125,7 @@ if __name__ == "__main__":
             update_experiment_csv_logs(exp_yaml)
             get_experiment_resources(exp_yaml)
             check_experiment_state(exp_yaml)   
-            run_exp(exp_yaml) 
+            run_exp(exp_yaml)
             evaluate_exp(exp_yaml, overwrite)     
             compare_exp(exp_yaml) 
 
@@ -137,4 +152,4 @@ if __name__ == "__main__":
             update_experiment_csv_logs(exp_yaml)
             get_experiment_resources(exp_yaml)
             check_experiment_state(exp_yaml)   
-            run_exp(exp_yaml) 
+            run_exp(exp_yaml)

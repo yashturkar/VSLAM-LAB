@@ -1,0 +1,21 @@
+dataset_name: lightning
+
+rgb_hz: 5.0
+modes: ['mono']
+cam_models: ['radtan5']
+
+sequence_names: []
+sequence_location: local
+
+about:
+  license: Research data; see the source dataset
+  summary: Locally produced monocular sequences with KITTI-format poses.
+  homepage: https://github.com/VSLAM-LAB/VSLAM-LAB
+  authors:
+    - Local research dataset
+
+vslamlab_maintainer:
+  name: Yash Turkar
+  assisted_by: Codex
+  email: yashturkar@gmail.com
+  date: 2026-08-11

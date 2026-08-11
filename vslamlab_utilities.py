@@ -11,6 +11,7 @@ from Baselines.get_baseline import list_available_baselines, get_baseline
 from Run.run_functions import run_sequence
 from Evaluate.evaluate_functions import evaluate_sequence
 from Evaluate import compare_functions
+from Evaluate.metrics_json import write_experiment_metrics
 from path_constants import VSLAMLAB_BENCHMARK, VSLAMLAB_EVALUATION, VSLAM_LAB_DIR, CONFIG_DEFAULT, VSLAMLAB_VIDEOS, COMPARISONS_YAML_DEFAULT
 
 SCRIPT_LABEL = f"\033[95m[{os.path.basename(__file__)}]\033[0m "
@@ -153,6 +154,32 @@ def evaluate_exp(exp_yaml: str | Path, overwrite: bool = False) -> None:
                         print_msg(f"\n{SCRIPT_LABEL}", f"Evaluating (in {VSLAMLAB_EVALUATION}) ...")
                         first_evaluation_found = False
                     evaluate_sequence(exp, dataset, sequence_name, overwrite)
+
+##################################################################################################################################################
+# eval_metrics
+##################################################################################################################################################
+def eval_metrics(exp_yaml: str | Path) -> None:
+    """Run, evaluate, and write one deterministic metrics.json per sequence."""
+    run_exp(exp_yaml)
+    evaluate_exp(exp_yaml, overwrite=False)
+    for exp in load_experiments(exp_yaml).values():
+        exp_log = read_csv(exp.log_csv)
+        with open(exp.config_yaml, encoding="utf-8") as file:
+            config_data = yaml.safe_load(file) or {}
+        for dataset_name, sequence_names in config_data.items():
+            dataset = get_dataset(dataset_name)
+            for sequence_name in sequence_names:
+                rows = exp_log[
+                    (exp_log["dataset_name"] == dataset_name)
+                    & (exp_log["sequence_name"].astype(str) == str(sequence_name))
+                    & (exp_log["EVALUATION"] == "ate")
+                ]
+                if rows.empty:
+                    print_msg(f"{ws(4)}", f"No evaluated trajectory for {dataset_name}/{sequence_name}", "warning")
+                    continue
+                exp_it = str(int(rows["exp_it"].max())).zfill(5)
+                metrics_path = write_experiment_metrics(exp, dataset, str(sequence_name), exp_it)
+                print_msg(f"{ws(4)}", f"Generated {metrics_path}", verb="LOW")
 
 ##################################################################################################################################################
 # run_exp
