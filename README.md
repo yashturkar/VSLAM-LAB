@@ -125,7 +125,42 @@ pixi run download-sequence <dataset> <sequence>          # Example: pixi run dow
 pixi run run-exp <exp_yaml>                              # Example: pixi run run-exp configs/exp_vslamlab.yaml
 pixi run evaluate-exp <exp_yaml>                         # Example: pixi run evaluate-exp configs/exp_vslamlab.yaml
 pixi run compare-exp <exp_yaml>                          # Example: pixi run compare-exp configs/exp_vslamlab.yaml
+pixi run eval-metrics <exp_yaml>                         # Run, evaluate, and write metrics.json
+pixi run eval-metrics-single <config_yaml>               # Headless custom-sequence evaluation
+pixi run demo-single <config_yaml>                       # GUI custom-sequence demo
 ```
+
+### Research evaluation workflows
+
+`eval-metrics` runs the standard experiment pipeline and writes a machine-readable
+`metrics.json` under each sequence's `vslamlab_evaluation` directory. For a local
+sequence, copy `configs/single_lightning.yaml`, set `base_path` and `name`, then run:
+
+```bash
+pixi run eval-metrics-single configs/single_lightning.yaml
+pixi run demo-single configs/single_lightning.yaml
+```
+
+The preferred portable dataset selector is `dataset: lightning`. A repository-relative
+or absolute path to a custom Python dataset module is also accepted. Relative
+`output_dir` values are created below `base_path`. The output `metrics.json` contains
+ATE/RMSE values, trajectory lengths, symmetric length coverage (`length_ratio`), and
+coverage-weighted RMSE.
+
+### Shared runtime storage
+
+Keep Pixi environments, baseline checkouts, checkpoints, and model caches off the
+source disk with:
+
+```bash
+python Utilities/setup_shared_storage.py --root /mnt/share/local/eph/VSLAM
+```
+
+The setup is idempotent. It links `.pixi`, configures project caches, and causes future
+baseline installs to relocate ignored third-party checkouts beneath the shared root.
+Existing baseline checkouts are copied and verified first, with timestamped local
+backups retained for manual removal after validation. Benchmark and evaluation paths
+remain controlled by `set-benchmark-path` and `set-evaluation-path`.
 
 ## Add a new VSLAM Dataset
 
