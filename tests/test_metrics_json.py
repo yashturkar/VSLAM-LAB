@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from Evaluate.metrics_json import symmetric_coverage, trajectory_length, write_metrics_json
+from Evaluate.metrics_json import aligned_rotation_rmse, symmetric_coverage, trajectory_length, write_metrics_json
 
 
 class MetricsTests(unittest.TestCase):
@@ -19,6 +19,18 @@ class MetricsTests(unittest.TestCase):
     def test_trajectory_length(self):
         frame = pd.DataFrame([[0, 0, 0, 0], [1, 3, 4, 0], [2, 3, 4, 12]])
         self.assertEqual(trajectory_length(frame), 17.0)
+
+    def test_rotation_rmse_matches_timestamps(self):
+        with tempfile.TemporaryDirectory() as directory:
+            evaluation = Path(directory)
+            predicted = evaluation / "00000_KeyFrameTrajectory.tum"
+            groundtruth = evaluation / "00000_gt.tum"
+            predicted.write_text("10 0 0 0 0 0 0 1\n30 0 0 0 0 0 0.70710678 0.70710678\n", encoding="utf-8")
+            groundtruth.write_text(
+                "10 0 0 0 0 0 0 1\n20 0 0 0 0 0 0 1\n30 0 0 0 0 0 0.70710678 0.70710678\n",
+                encoding="utf-8",
+            )
+            self.assertAlmostEqual(aligned_rotation_rmse(evaluation, "00000"), 0.0)
 
     def test_zero_coverage_writes_null_weighted_rmse(self):
         with tempfile.TemporaryDirectory() as directory:

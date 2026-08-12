@@ -223,6 +223,7 @@ platforms = ["linux-64-cuda"]
 [feature.mast3rslam.tasks]
 git-clone = 'git clone https://huggingface.co/vslamlab/mast3rslam-vslamlab Baselines/MASt3R-SLAM'
 execute-mono = 'vslamlab_mast3rslam_mono'
+setup-blackwell = "python Utilities/setup_mast3r_blackwell.py"
 
 [feature.mast3rslam.dependencies]
 mast3rslam-vslamlab = { channel = "fontan" }

@@ -3,14 +3,10 @@ import os
 import shutil
 
 sys.path.append(os.getcwd())
-from tqdm import tqdm
-
 import subprocess
-import zipfile
 import pandas as pd
-import numpy as np
-from utilities import find_files_with_string, read_trajectory_csv, save_trajectory_csv, read_trajectory_txt
-from path_constants import ABLATION_PARAMETERS_CSV, TRAJECTORY_FILE_NAME
+from utilities import read_trajectory_csv, save_trajectory_csv, read_trajectory_txt
+from path_constants import TRAJECTORY_FILE_NAME
 
 def evo_metric(metric, groundtruth_csv, trajectory_csv, evaluation_folder, max_time_difference=0.1):
     # Paths
@@ -19,7 +15,7 @@ def evo_metric(metric, groundtruth_csv, trajectory_csv, evaluation_folder, max_t
     traj_tum = os.path.join(evaluation_folder, f"{traj_file_name}.tum")
     gt_tum = traj_tum.replace(TRAJECTORY_FILE_NAME, "gt")
     traj_txt = os.path.join(evaluation_folder, f"{traj_file_name}.txt")
-    gt_txt = os.path.join(evaluation_folder, f"groundtruth.txt")
+    gt_txt = os.path.join(evaluation_folder, "groundtruth.txt")
 
     # Read trajectory.csv
     traj_df = read_trajectory_csv(trajectory_csv)
@@ -39,28 +35,36 @@ def evo_metric(metric, groundtruth_csv, trajectory_csv, evaluation_folder, max_t
     gt_df.to_csv(gt_txt, header=False, index=False, sep=' ', lineterminator='\n')
 
     # Evaluate
-    if metric == 'ate':     
-        command = (f"evo_ape tum {gt_txt} {traj_txt} -va -as "
-                   f"--t_max_diff {max_time_difference} --save_results {traj_zip}")
-    if metric == 'rpe':
-        command = f"evo_rpe tum {gt_txt} {traj_txt} --all_pairs --delta 5 -va -as --save_results {traj_zip}"
+    if metric == 'ate':
+        command = ["evo_ape", "tum", gt_txt, traj_txt, "-va", "-as",
+                   "--t_max_diff", str(max_time_difference), "--save_results", traj_zip, "--no_warnings"]
+    elif metric == 'rpe':
+        command = ["evo_rpe", "tum", gt_txt, traj_txt, "--all_pairs", "--delta", "5",
+                   "-va", "-as", "--save_results", traj_zip, "--no_warnings"]
+    else:
+        return [False, f"Unsupported evo metric: {metric}"]
 
-    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    _, _ = process.communicate()
+    process = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
     if not os.path.exists(traj_zip):
-        return [False, f"Zip file not created: {traj_zip}"]
+        message = process.stderr.strip() or process.stdout.strip()
+        return [False, f"Zip file not created: {traj_zip}. {message}"]
 
-    # Write aligned trajectory
-    with zipfile.ZipFile(traj_zip, 'r') as zip_ref:
-        for file_name in zip_ref.namelist():
-            if file_name.endswith(traj_txt + '.tum'):
-                with zip_ref.open(file_name) as source_file:
-                    aligned_trajectory_file = os.path.join(evaluation_folder,
-                        os.path.basename(file_name).replace(".txt", ""))
-                    with open(aligned_trajectory_file, 'wb') as target_file:
-                        target_file.write(source_file.read())
-                break
+    # Current evo result archives contain statistics, not aligned trajectories.
+    # Export those separately so downstream coverage and rotation metrics remain available.
+    export_command = [
+        "evo_traj", "tum", os.path.basename(traj_txt), "--ref", os.path.basename(gt_txt),
+        "--sync", "-as", "--t_max_diff", str(max_time_difference), "--save_as_tum", "--no_warnings",
+    ]
+    export = subprocess.run(
+        export_command, cwd=evaluation_folder, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
+    aligned_trajectory_file = traj_tum
+    exported_gt = os.path.join(evaluation_folder, "groundtruth.tum")
+    if export.returncode != 0 or not os.path.exists(aligned_trajectory_file) or not os.path.exists(exported_gt):
+        message = export.stderr.strip() or export.stdout.strip()
+        return [False, f"Aligned trajectory export failed: {message}"]
+    shutil.move(exported_gt, gt_tum)
 
     aligned_trajectory = read_trajectory_txt(aligned_trajectory_file)
     if aligned_trajectory is None:
@@ -68,15 +72,6 @@ def evo_metric(metric, groundtruth_csv, trajectory_csv, evaluation_folder, max_t
     aligned_trajectory.columns = ['ts', 'tx', 'ty', 'tz', 'qx', 'qy', 'qz', 'qw']
     aligned_trajectory = aligned_trajectory.sort_values(by='ts')
     save_trajectory_csv(aligned_trajectory_file, aligned_trajectory, header=True)
-    
-    # Write aligned gt
-    with zipfile.ZipFile(traj_zip, 'r') as zip_ref:
-        for file_name in zip_ref.namelist():
-            if file_name.endswith(gt_txt + '.tum'):
-                with zip_ref.open(file_name) as source_file:
-                    with open(gt_tum, 'wb') as target_file:
-                        target_file.write(source_file.read())
-                break
     
     aligned_gt = read_trajectory_txt(gt_tum)
     if aligned_gt is None:

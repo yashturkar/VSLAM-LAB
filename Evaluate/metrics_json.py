@@ -83,17 +83,16 @@ def aligned_rotation_rmse(evaluation_folder: Path, exp_it: str) -> float | None:
     groundtruth = _read_trajectory(groundtruth_path)
     if predicted is None or groundtruth is None:
         return None
-    count = min(len(predicted.index), len(groundtruth.index))
-    if count == 0 or len(predicted.columns) < 8 or len(groundtruth.columns) < 8:
+    if len(predicted.columns) < 8 or len(groundtruth.columns) < 8:
         return None
     try:
-        pred_quaternions = predicted.iloc[:count, 4:8].apply(pd.to_numeric, errors="coerce").dropna()
-        gt_quaternions = groundtruth.iloc[:count, 4:8].apply(pd.to_numeric, errors="coerce").dropna()
-        count = min(len(pred_quaternions.index), len(gt_quaternions.index))
-        if count == 0:
+        predicted = predicted.iloc[:, :8].apply(pd.to_numeric, errors="coerce").dropna()
+        groundtruth = groundtruth.iloc[:, :8].apply(pd.to_numeric, errors="coerce").dropna()
+        matched = predicted.merge(groundtruth, on=predicted.columns[0], suffixes=("_pred", "_gt"))
+        if matched.empty:
             return None
-        pred_rotation = Rotation.from_quat(pred_quaternions.iloc[:count].to_numpy(dtype=float))
-        gt_rotation = Rotation.from_quat(gt_quaternions.iloc[:count].to_numpy(dtype=float))
+        pred_rotation = Rotation.from_quat(matched.iloc[:, 4:8].to_numpy(dtype=float))
+        gt_rotation = Rotation.from_quat(matched.iloc[:, 11:15].to_numpy(dtype=float))
         errors = (pred_rotation.inv() * gt_rotation).magnitude()
     except (TypeError, ValueError):
         return None

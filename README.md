@@ -162,6 +162,14 @@ Existing baseline checkouts are copied and verified first, with timestamped loca
 backups retained for manual removal after validation. Benchmark and evaluation paths
 remain controlled by `set-benchmark-path` and `set-evaluation-path`.
 
+RTX 50-series and RTX PRO Blackwell GPUs (`sm_120`) require a PyTorch build made with
+CUDA 12.8 or newer. After installing the MASt3R-SLAM environment, apply its compatible
+PyTorch wheel and rebuild the MASt3R matching kernels once with:
+
+```bash
+pixi run -e mast3rslam setup-blackwell
+```
+
 ## Add a new VSLAM Dataset
 
 Expand the evaluation suite by integrating custom datasets. Follow the instructions in [Wiki: Integrate a new VSLAM Dataset](https://github.com/VSLAM-LAB/VSLAM-LAB/wiki/Integrate-a-new-VSLAM-Dataset).
