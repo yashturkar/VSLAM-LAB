@@ -50,6 +50,21 @@ class SingleSequenceTests(unittest.TestCase):
             self.assertEqual(int(groundtruth.iloc[0, 0]), 1_250_000_000)
             self.assertIn("cam_model: radtan5", (sequence / "calibration.yaml").read_text(encoding="utf-8"))
 
+    def test_nested_images_and_ancestor_calibration_are_discovered(self):
+        with tempfile.TemporaryDirectory() as directory:
+            processed = Path(directory) / "Processed"
+            root = processed / "sample_extract"
+            name = "sample_extract"
+            image_dir = root / "sequences" / name / "image_0"
+            image_dir.mkdir(parents=True)
+            (root / "poses").mkdir()
+            cv2.imwrite(str(image_dir / "000000.png"), np.zeros((4, 6, 3), dtype=np.uint8))
+            (root / "sequences" / name / "times.txt").write_text("1.25\n", encoding="utf-8")
+            (root / "poses" / f"{name}.txt").write_text("1 0 0 0 0 1 0 0 0 0 1 0\n", encoding="utf-8")
+            (processed / "lightning.yaml").write_text("Camera.fx: 10\nCamera.fy: 11\nCamera.cx: 3\nCamera.cy: 2\nCamera.fps: 5\n", encoding="utf-8")
+            sequence = LightningDataset().prepare_local_sequence(root, name)
+            self.assertEqual((sequence / "rgb_0").resolve(), image_dir.resolve())
+
     def test_legacy_absolute_module_path_remains_supported(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

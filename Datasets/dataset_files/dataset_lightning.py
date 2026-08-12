@@ -53,10 +53,13 @@ class LightningDataset(DatasetVSLAMLAB):
         if all(path.exists() for path in required):
             return sequence_path
 
+        nested_sequence = base_path / "sequences" / sequence_name
         image_source = base_path / "image_0"
+        if not image_source.is_dir():
+            image_source = nested_sequence / "image_0"
         times_path = base_path / "sequences" / sequence_name / "times.txt"
         poses_path = base_path / "poses" / f"{sequence_name}.txt"
-        calibration_source = base_path / "config.yaml"
+        calibration_source = self._find_calibration(base_path)
         missing = [path for path in (image_source, times_path, poses_path, calibration_source) if not path.exists()]
         if missing:
             raise FileNotFoundError("Missing LIGHTNING input(s): " + ", ".join(map(str, missing)))
@@ -80,6 +83,18 @@ class LightningDataset(DatasetVSLAMLAB):
         self._write_groundtruth(sequence_name, poses_path, times)
         self._write_calibration(sequence_name, calibration_source, images[0] if images else None)
         return sequence_path
+
+    @staticmethod
+    def _find_calibration(base_path: Path) -> Path:
+        """Find per-sequence config.yaml or a shared ancestor lightning.yaml."""
+        direct = base_path / "config.yaml"
+        if direct.is_file():
+            return direct
+        for parent in (base_path, *base_path.parents):
+            candidate = parent / "lightning.yaml"
+            if candidate.is_file():
+                return candidate
+        return direct
 
     def _write_groundtruth(self, sequence_name: str, poses_path: Path, times: list[float]) -> None:
         rows: list[list[Any]] = []

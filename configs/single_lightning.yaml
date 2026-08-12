@@ -1,8 +1,8 @@
 DATASET:
   # Directory containing either <name>/{rgb_0,rgb.csv,calibration.yaml,groundtruth.csv}
-  # or the raw LIGHTNING image_0/, sequences/, poses/, and config.yaml layout.
-  base_path: /path/to/lightning/sequence-root
-  name: sequence_name
+  # or the raw LIGHTNING sequences/<name>/image_0, poses/, and shared lightning.yaml layout.
+  base_path: /mnt/share/local/eph/clid-dataset/davis-lightning-12-2025/Sequences/Processed/113through_p0.5_extract
+  name: 113through_p0.5_extract
   baseline: mast3rslam
   dataset: lightning
   sensor_type: mono
