@@ -1,0 +1,8 @@
+DATASET:
+  base_path: /mnt/share/local/eph/clid-dataset/davis-lightning-12-2025/Sequences/Processed/101backdoor_p0.0_extract
+  name: 101backdoor_p0.0_extract
+  baseline: orbslam3
+  dataset: lightning
+  sensor_type: stereo
+  groundtruth_format: kitti
+  output_dir: output/orbslam3_stereo

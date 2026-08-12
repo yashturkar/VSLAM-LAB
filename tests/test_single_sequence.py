@@ -61,28 +61,36 @@ class SingleSequenceTests(unittest.TestCase):
             root = Path(directory)
             name = "sample"
             image_dir = root / "image_0"
+            right_image_dir = root / "image_1"
             (root / "sequences" / name).mkdir(parents=True)
             (root / "poses").mkdir()
             image_dir.mkdir()
+            right_image_dir.mkdir()
             cv2.imwrite(str(image_dir / "000000.png"), np.zeros((4, 6, 3), dtype=np.uint8))
             cv2.imwrite(str(image_dir / "000001.png"), np.zeros((4, 6, 3), dtype=np.uint8))
+            cv2.imwrite(str(right_image_dir / "000000.png"), np.zeros((4, 6, 3), dtype=np.uint8))
+            cv2.imwrite(str(right_image_dir / "000001.png"), np.zeros((4, 6, 3), dtype=np.uint8))
             (root / "sequences" / name / "times.txt").write_text("1.25\n1.35\n", encoding="utf-8")
             (root / "poses" / f"{name}.txt").write_text(
                 "1 0 0 0 0 1 0 0 0 0 1 0\n1 0 0 0 0 1 0 0 0 0 1 0\n", encoding="utf-8"
             )
             (root / "config.yaml").write_text(
-                "Camera:\n  fx: 10\n  fy: 11\n  cx: 3\n  cy: 2\n  fps: 5\n",
+                "Camera:\n  fx: 10\n  fy: 11\n  cx: 3\n  cy: 2\n  fps: 5\n  bf: 2\n"
+                "Stereo.R: [1, 0, 0, 0, 1, 0, 0, 0, 1]\n"
+                "Stereo.T: [-0.2, 0, 0]\n",
                 encoding="utf-8",
             )
 
             dataset = LightningDataset()
             sequence = dataset.prepare_local_sequence(root, name)
             self.assertTrue((sequence / "rgb_0").is_symlink())
+            self.assertTrue((sequence / "rgb_1").is_symlink())
             rgb = pd.read_csv(sequence / "rgb.csv")
             groundtruth = pd.read_csv(sequence / "groundtruth.csv")
             self.assertEqual(int(rgb.iloc[0, 0]), 1_250_000_000)
             self.assertEqual(int(groundtruth.iloc[0, 0]), 1_250_000_000)
             self.assertAlmostEqual(dataset.rgb_hz, 10.0)
+            self.assertEqual(list(rgb.columns), ["ts_rgb_0 (ns)", "path_rgb_0", "ts_rgb_1 (ns)", "path_rgb_1"])
             self.assertIn(
                 "cam_model: radtan5",
                 (sequence / "calibration.yaml").read_text(encoding="utf-8"),
@@ -91,6 +99,8 @@ class SingleSequenceTests(unittest.TestCase):
                 "distortion_type: radtan5",
                 (sequence / "calibration.yaml").read_text(encoding="utf-8"),
             )
+            self.assertIn("cam_name: rgb_1", (sequence / "calibration.yaml").read_text(encoding="utf-8"))
+            self.assertIn("0.2000000000000", (sequence / "calibration.yaml").read_text(encoding="utf-8"))
             calibration = sequence / "calibration.yaml"
             calibration.write_text(
                 calibration.read_text(encoding="utf-8").replace("distortion_type: radtan5", "distortion_type: radtan"),

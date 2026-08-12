@@ -154,6 +154,12 @@ Ready-to-run LIGHTNING examples are also provided for monocular ORB-SLAM2 and
 ORB-SLAM3. Use `eval-metrics-single` for headless servers; `demo-single` requires an X
 display for baseline viewers such as Pangolin.
 
+LIGHTNING stereo sequences are detected from `image_0` and `image_1`. Put the calibrated
+OpenCV left-to-right transform in the sequence calibration as flattened `Stereo.R` and
+`Stereo.T` values; the adapter converts it to the VSLAM-LAB camera-pose convention.
+The measured rig values are recorded in `configs/calibration_lightning_stereo.yaml`.
+Examples for `101backdoor_p0.0_extract` are provided for ORB-SLAM2 and ORB-SLAM3 stereo.
+
 ### Shared runtime storage
 
 Keep Pixi environments, baseline checkouts, checkpoints, and model caches off the

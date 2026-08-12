@@ -1,4 +1,4 @@
-"""Adapter for locally produced LIGHTNING monocular sequences."""
+"""Adapter for locally produced LIGHTNING mono or stereo sequences."""
 
 from __future__ import annotations
 
@@ -55,32 +55,33 @@ class LightningDataset(DatasetVSLAMLAB):
             self.groundtruth_csv_path(sequence_name),
         )
         if all(path.exists() for path in required):
-            calibration = self.calibration_yaml_path(sequence_name)
-            text = calibration.read_text(encoding="utf-8")
-            if "cam_model: radtan5" in text and "distortion_type: radtan," in text:
-                calibration.write_text(
-                    text.replace("distortion_type: radtan,", "distortion_type: radtan5,"),
-                    encoding="utf-8",
-                )
             raw_times = base_path / "sequences" / sequence_name / "times.txt"
             calibration_source = self._find_calibration(base_path)
             if raw_times.is_file() and calibration_source.is_file():
                 times = [float(line) for line in raw_times.read_text(encoding="utf-8").splitlines() if line.strip()]
-                first_image = next(
-                    (
-                        path
-                        for path in sorted(self.rgb_path(sequence_name).iterdir())
-                        if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg"}
-                    ),
-                    None,
+                left_images = self._images(self.rgb_path(sequence_name))
+                right_source = base_path / "sequences" / sequence_name / "image_1"
+                right_path = sequence_path / "rgb_1"
+                if right_source.is_dir() and not right_path.exists():
+                    right_path.symlink_to(os.path.relpath(right_source, right_path.parent), target_is_directory=True)
+                right_images = self._images(right_path) if right_path.is_dir() else []
+                self._write_rgb_csv(sequence_name, times, left_images, right_images)
+                self._write_calibration(
+                    sequence_name,
+                    calibration_source,
+                    left_images[0] if left_images else None,
+                    times,
+                    stereo=bool(right_images),
                 )
-                self._write_calibration(sequence_name, calibration_source, first_image, times)
             return sequence_path
 
         nested_sequence = base_path / "sequences" / sequence_name
         image_source = base_path / "image_0"
         if not image_source.is_dir():
             image_source = nested_sequence / "image_0"
+        right_source = base_path / "image_1"
+        if not right_source.is_dir():
+            right_source = nested_sequence / "image_1"
         times_path = base_path / "sequences" / sequence_name / "times.txt"
         poses_path = base_path / "poses" / f"{sequence_name}.txt"
         calibration_source = self._find_calibration(base_path)
@@ -91,23 +92,55 @@ class LightningDataset(DatasetVSLAMLAB):
         rgb_path = self.rgb_path(sequence_name)
         if not rgb_path.exists():
             rgb_path.symlink_to(os.path.relpath(image_source, rgb_path.parent), target_is_directory=True)
+        right_path = sequence_path / "rgb_1"
+        if right_source.is_dir() and not right_path.exists():
+            right_path.symlink_to(os.path.relpath(right_source, right_path.parent), target_is_directory=True)
 
         times = [float(line.strip()) for line in times_path.read_text(encoding="utf-8").splitlines() if line.strip()]
-        images = sorted(
-            path
-            for path in image_source.iterdir()
-            if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg"}
+        left_images = self._images(image_source)
+        right_images = self._images(right_source) if right_source.is_dir() else []
+        self._write_rgb_csv(sequence_name, times, left_images, right_images)
+        self._write_groundtruth(sequence_name, poses_path, times)
+        self._write_calibration(
+            sequence_name,
+            calibration_source,
+            left_images[0] if left_images else None,
+            times,
+            stereo=bool(right_images),
         )
-        if len(times) != len(images):
-            raise ValueError(f"LIGHTNING timestamp/image count mismatch: {len(times)} != {len(images)}")
+        return sequence_path
+
+    @staticmethod
+    def _images(folder: Path) -> list[Path]:
+        return sorted(
+            path for path in folder.iterdir() if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg"}
+        )
+
+    def _write_rgb_csv(
+        self, sequence_name: str, times: list[float], left_images: list[Path], right_images: list[Path]
+    ) -> None:
+        if len(times) != len(left_images):
+            raise ValueError(f"LIGHTNING timestamp/left-image count mismatch: {len(times)} != {len(left_images)}")
+        timestamps = [int(timestamp * 1e9) for timestamp in times]
+        if right_images:
+            if len(right_images) != len(left_images):
+                raise ValueError(
+                    f"LIGHTNING left/right image count mismatch: {len(left_images)} != {len(right_images)}"
+                )
+            write_csv_rows(
+                self.rgb_csv_path(sequence_name),
+                ["ts_rgb_0 (ns)", "path_rgb_0", "ts_rgb_1 (ns)", "path_rgb_1"],
+                [
+                    [timestamp, f"rgb_0/{left.name}", timestamp, f"rgb_1/{right.name}"]
+                    for timestamp, left, right in zip(timestamps, left_images, right_images)
+                ],
+            )
+            return
         write_csv_rows(
             self.rgb_csv_path(sequence_name),
             ["ts_rgb_0 (ns)", "path_rgb_0"],
-            [[int(timestamp * 1e9), f"rgb_0/{image.name}"] for timestamp, image in zip(times, images)],
+            [[timestamp, f"rgb_0/{image.name}"] for timestamp, image in zip(timestamps, left_images)],
         )
-        self._write_groundtruth(sequence_name, poses_path, times)
-        self._write_calibration(sequence_name, calibration_source, images[0] if images else None, times)
-        return sequence_path
 
     @staticmethod
     def _find_calibration(base_path: Path) -> Path:
@@ -146,6 +179,7 @@ class LightningDataset(DatasetVSLAMLAB):
         source: Path,
         first_image: Path | None,
         times: list[float] | None = None,
+        stereo: bool = False,
     ) -> None:
         with open(source, encoding="utf-8") as file:
             config = yaml.safe_load(file) or {}
@@ -190,7 +224,22 @@ class LightningDataset(DatasetVSLAMLAB):
             "T_BS": np.eye(4),
         }
         self.rgb_hz = float(rgb0["fps"])
-        self.write_calibration_yaml(sequence_name, rgb=[rgb0])
+        cameras = [rgb0]
+        if stereo:
+            right_extrinsics = np.eye(4)
+            rotation = config.get("Stereo.R")
+            translation = config.get("Stereo.T")
+            if rotation is not None and translation is not None:
+                left_to_right_rotation = np.asarray(rotation, dtype=float).reshape(3, 3)
+                left_to_right_translation = np.asarray(translation, dtype=float).reshape(3)
+                right_extrinsics[:3, :3] = left_to_right_rotation.T
+                right_extrinsics[:3, 3] = -left_to_right_rotation.T @ left_to_right_translation
+            else:
+                right_extrinsics[0, 3] = value("bf", 240.0) / rgb0["focal_length"][0]
+            rgb1 = dict(rgb0)
+            rgb1.update({"cam_name": "rgb_1", "T_BS": right_extrinsics})
+            cameras.append(rgb1)
+        self.write_calibration_yaml(sequence_name, rgb=cameras)
 
     def create_groundtruth_csv(self, sequence_name: str) -> None:
         if not self.groundtruth_csv_path(sequence_name).exists():
