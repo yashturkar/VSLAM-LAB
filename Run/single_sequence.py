@@ -7,7 +7,7 @@ import inspect
 import os
 import shutil
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Iterator
@@ -33,6 +33,7 @@ class SingleSequenceConfig:
     output_dir: Path
     sensor_type: str = "mono"
     groundtruth_format: str = "kitti"
+    parameters: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def load(cls, config_yaml: str | Path) -> "SingleSequenceConfig":
@@ -55,6 +56,9 @@ class SingleSequenceConfig:
         baseline = str(section["baseline"]).lower()
         if baseline not in list_available_baselines():
             raise ValueError(f"Unknown baseline: {baseline}")
+        parameters = section.get("parameters", {})
+        if not isinstance(parameters, dict):
+            raise ValueError("DATASET.parameters must be a mapping")
         return cls(
             base_path=base_path,
             name=str(section["name"]),
@@ -63,6 +67,7 @@ class SingleSequenceConfig:
             output_dir=output.resolve(),
             sensor_type=str(section.get("sensor_type", "mono")),
             groundtruth_format=str(section.get("groundtruth_format", "kitti")),
+            parameters=dict(parameters),
         )
 
 
@@ -98,8 +103,11 @@ def load_dataset(
         raise FileNotFoundError(f"Dataset module does not exist: {selector}")
     module = _load_module(resolved)
     classes = [
-        value for value in vars(module).values()
-        if isinstance(value, type) and issubclass(value, DatasetVSLAMLAB) and value is not DatasetVSLAMLAB
+        value
+        for value in vars(module).values()
+        if isinstance(value, type)
+        and issubclass(value, DatasetVSLAMLAB)
+        and value is not DatasetVSLAMLAB
         and value.__module__ == module.__name__
     ]
     if len(classes) != 1:
@@ -118,11 +126,15 @@ def load_dataset(
 
 @contextmanager
 def headless_environment(enabled: bool) -> Iterator[None]:
-    overrides = {
-        "DISPLAY": "",
-        "QT_QPA_PLATFORM": "offscreen",
-        "PANGOLIN_WINDOW_URI": "headless://",
-    } if enabled else {}
+    overrides = (
+        {
+            "DISPLAY": "",
+            "QT_QPA_PLATFORM": "offscreen",
+            "PANGOLIN_WINDOW_URI": "headless://",
+        }
+        if enabled
+        else {}
+    )
     original = {key: os.environ.get(key) for key in overrides}
     os.environ.update(overrides)
     try:
@@ -152,14 +164,26 @@ def _prepare(config_yaml: str | Path, headless: bool) -> tuple[SingleSequenceCon
     if hasattr(dataset, "prepare_local_sequence"):
         dataset.prepare_local_sequence(config.base_path, config.name)
     sequence_path = dataset.sequence_path(config.name)
-    required = [sequence_path / "rgb_0", sequence_path / "rgb.csv", sequence_path / "calibration.yaml"]
+    required = [
+        sequence_path / "rgb_0",
+        sequence_path / "rgb.csv",
+        sequence_path / "calibration.yaml",
+    ]
     missing = [path for path in required if not path.exists()]
     if missing:
         raise FileNotFoundError("Prepared sequence is missing: " + ", ".join(map(str, missing)))
 
     baseline = get_baseline(config.baseline)
     parameters = dict(baseline.get_default_parameters())
-    parameters.update({"mode": config.sensor_type, "gui": not headless, "headless": headless, "show_gui": not headless})
+    parameters.update(config.parameters)
+    parameters.update(
+        {
+            "mode": config.sensor_type,
+            "gui": not headless,
+            "headless": headless,
+            "show_gui": not headless,
+        }
+    )
     if headless:
         parameters["verbose"] = 0
     run_root = config.output_dir / ".vslamlab_run"
@@ -173,6 +197,8 @@ def _trajectory(run_folder: Path) -> Path:
     trajectory = run_folder / f"00000_{TRAJECTORY_FILE_NAME}.csv"
     if not trajectory.exists():
         raise RuntimeError(f"Baseline did not produce a trajectory: {trajectory}")
+    if len(trajectory.read_text(encoding="utf-8").splitlines()) < 2:
+        raise RuntimeError(f"Baseline produced an empty trajectory: {trajectory}")
     return trajectory
 
 
@@ -190,8 +216,16 @@ def _write_report(trajectory: Path, groundtruth: Path, output: Path, title: str)
         (axes[0], (1, 2), ("x (m)", "y (m)")),
         (axes[1], (1, 3), ("x (m)", "z (m)")),
     ):
-        axis.plot(reference.iloc[:, dimensions[0]], reference.iloc[:, dimensions[1]], label="ground truth")
-        axis.plot(predicted.iloc[:, dimensions[0]], predicted.iloc[:, dimensions[1]], label="estimate")
+        axis.plot(
+            reference.iloc[:, dimensions[0]],
+            reference.iloc[:, dimensions[1]],
+            label="ground truth",
+        )
+        axis.plot(
+            predicted.iloc[:, dimensions[0]],
+            predicted.iloc[:, dimensions[1]],
+            label="estimate",
+        )
         axis.set_xlabel(labels[0])
         axis.set_ylabel(labels[1])
         axis.axis("equal")
@@ -212,7 +246,11 @@ def run_single(config_yaml: str | Path, evaluate: bool) -> Path:
     config.output_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(trajectory, config.output_dir / trajectory.name)
     if not results.get("success", False):
-        print_msg(f"{ws(4)}", "Baseline reported failure but produced a usable trajectory", "warning")
+        print_msg(
+            f"{ws(4)}",
+            "Baseline reported failure but produced a usable trajectory",
+            "warning",
+        )
     if not evaluate:
         return trajectory
 
@@ -221,9 +259,7 @@ def run_single(config_yaml: str | Path, evaluate: bool) -> Path:
         raise FileNotFoundError(f"Ground truth is required for evaluation: {groundtruth}")
     evaluation_folder = run_folder / "vslamlab_evaluation"
     evaluation_folder.mkdir(parents=True, exist_ok=True)
-    success, message = evo_metric(
-        "ate", groundtruth, trajectory, evaluation_folder, 1e9 / float(dataset.rgb_hz)
-    )
+    success, message = evo_metric("ate", groundtruth, trajectory, evaluation_folder, 1e9 / float(dataset.rgb_hz))
     if success:
         archive = evaluation_folder / f"00000_{TRAJECTORY_FILE_NAME}.zip"
         if archive.exists():
@@ -231,7 +267,11 @@ def run_single(config_yaml: str | Path, evaluate: bool) -> Path:
     else:
         print_msg(f"{ws(4)}", f"Evaluation failed: {message}", "warning")
     metrics = write_metrics_json(
-        config.output_dir / "metrics.json", trajectory, groundtruth, evaluation_folder, "00000",
+        config.output_dir / "metrics.json",
+        trajectory,
+        groundtruth,
+        evaluation_folder,
+        "00000",
         "SUCCESS" if success else "FAILURE",
     )
     _write_report(

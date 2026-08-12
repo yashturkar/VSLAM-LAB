@@ -48,9 +48,33 @@ class LightningDataset(DatasetVSLAMLAB):
         sequence_path.mkdir(parents=True, exist_ok=True)
 
         # Already prepared layouts need no conversion.
-        required = (self.rgb_path(sequence_name), self.rgb_csv_path(sequence_name),
-                    self.calibration_yaml_path(sequence_name), self.groundtruth_csv_path(sequence_name))
+        required = (
+            self.rgb_path(sequence_name),
+            self.rgb_csv_path(sequence_name),
+            self.calibration_yaml_path(sequence_name),
+            self.groundtruth_csv_path(sequence_name),
+        )
         if all(path.exists() for path in required):
+            calibration = self.calibration_yaml_path(sequence_name)
+            text = calibration.read_text(encoding="utf-8")
+            if "cam_model: radtan5" in text and "distortion_type: radtan," in text:
+                calibration.write_text(
+                    text.replace("distortion_type: radtan,", "distortion_type: radtan5,"),
+                    encoding="utf-8",
+                )
+            raw_times = base_path / "sequences" / sequence_name / "times.txt"
+            calibration_source = self._find_calibration(base_path)
+            if raw_times.is_file() and calibration_source.is_file():
+                times = [float(line) for line in raw_times.read_text(encoding="utf-8").splitlines() if line.strip()]
+                first_image = next(
+                    (
+                        path
+                        for path in sorted(self.rgb_path(sequence_name).iterdir())
+                        if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg"}
+                    ),
+                    None,
+                )
+                self._write_calibration(sequence_name, calibration_source, first_image, times)
             return sequence_path
 
         nested_sequence = base_path / "sequences" / sequence_name
@@ -70,7 +94,8 @@ class LightningDataset(DatasetVSLAMLAB):
 
         times = [float(line.strip()) for line in times_path.read_text(encoding="utf-8").splitlines() if line.strip()]
         images = sorted(
-            path for path in image_source.iterdir()
+            path
+            for path in image_source.iterdir()
             if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg"}
         )
         if len(times) != len(images):
@@ -81,7 +106,7 @@ class LightningDataset(DatasetVSLAMLAB):
             [[int(timestamp * 1e9), f"rgb_0/{image.name}"] for timestamp, image in zip(times, images)],
         )
         self._write_groundtruth(sequence_name, poses_path, times)
-        self._write_calibration(sequence_name, calibration_source, images[0] if images else None)
+        self._write_calibration(sequence_name, calibration_source, images[0] if images else None, times)
         return sequence_path
 
     @staticmethod
@@ -115,7 +140,13 @@ class LightningDataset(DatasetVSLAMLAB):
             rows,
         )
 
-    def _write_calibration(self, sequence_name: str, source: Path, first_image: Path | None) -> None:
+    def _write_calibration(
+        self,
+        sequence_name: str,
+        source: Path,
+        first_image: Path | None,
+        times: list[float] | None = None,
+    ) -> None:
         with open(source, encoding="utf-8") as file:
             config = yaml.safe_load(file) or {}
         camera = config.get("Camera", {}) if isinstance(config.get("Camera"), dict) else {}
@@ -128,20 +159,34 @@ class LightningDataset(DatasetVSLAMLAB):
             image = cv2.imread(str(first_image))
             if image is not None:
                 height, width = image.shape[:2]
+        fps = value("fps", self.rgb_hz)
+        if times and len(times) > 1:
+            intervals = np.diff(np.asarray(times, dtype=float))
+            positive_intervals = intervals[intervals > 0]
+            if positive_intervals.size:
+                fps = float(1.0 / np.median(positive_intervals))
         rgb0: dict[str, Any] = {
             "cam_name": "rgb_0",
             "cam_type": "mono",
             "cam_model": "radtan5",
-            "focal_length": [value("fx", 1446.9127793242951), value("fy", 1451.5846408378259)],
-            "principal_point": [value("cx", 964.9426652255537), value("cy", 607.0681454495964)],
-            "distortion_type": "radtan",
+            "focal_length": [
+                value("fx", 1446.9127793242951),
+                value("fy", 1451.5846408378259),
+            ],
+            "principal_point": [
+                value("cx", 964.9426652255537),
+                value("cy", 607.0681454495964),
+            ],
+            "distortion_type": "radtan5",
             "distortion_coefficients": [
-                value("k1", -0.13902893236244782), value("k2", 0.23675668936161912),
-                value("p1", -0.0006401710568311474), value("p2", 0.000710816965242213),
+                value("k1", -0.13902893236244782),
+                value("k2", 0.23675668936161912),
+                value("p1", -0.0006401710568311474),
+                value("p2", 0.000710816965242213),
                 value("k3", -0.2731326697949815),
             ],
             "image_dimension": [width, height],
-            "fps": value("fps", self.rgb_hz),
+            "fps": fps,
             "T_BS": np.eye(4),
         }
         self.rgb_hz = float(rgb0["fps"])

@@ -147,6 +147,13 @@ or absolute path to a custom Python dataset module is also accepted. Relative
 ATE/RMSE values, trajectory lengths, symmetric length coverage (`length_ratio`), and
 coverage-weighted RMSE.
 
+Single-sequence configs may also include a `DATASET.parameters` mapping to override
+baseline defaults. This is useful for fast classical smoke tests; for example,
+`configs/single_lightning_colmap_p0.yaml` limits COLMAP to 100 evenly sampled images.
+Ready-to-run LIGHTNING examples are also provided for monocular ORB-SLAM2 and
+ORB-SLAM3. Use `eval-metrics-single` for headless servers; `demo-single` requires an X
+display for baseline viewers such as Pangolin.
+
 ### Shared runtime storage
 
 Keep Pixi environments, baseline checkouts, checkpoints, and model caches off the

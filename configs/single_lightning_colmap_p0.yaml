@@ -1,0 +1,10 @@
+DATASET:
+  base_path: /mnt/share/local/eph/clid-dataset/davis-lightning-12-2025/Sequences/Processed/113through_p0.0_extract
+  name: 113through_p0.0_extract
+  baseline: colmap
+  dataset: lightning
+  sensor_type: mono
+  groundtruth_format: kitti
+  output_dir: output/colmap_100
+  parameters:
+    max_rgb: 100
