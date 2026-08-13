@@ -30,7 +30,7 @@ x11 = { features = ["x11"], solve-group = "x11" }
 opengl = { features = ["opengl"], solve-group = "opengl" }
 
 mast3rslam = { features = ["mast3rslam", "cuda126", "py11"], solve-group = "mast3r" }
-droidslam = { features = ["droidslam", "cuda126", "py11"], solve-group = "droid" }
+droidslam = { features = ["droidslam", "cuda126", "py11", "x11", "opengl"], solve-group = "droid" }
 dpvo = { features = ["dpvo", "cuda126", "py11"], solve-group = "droid" }
 monogs = { features = ["monogs"], solve-group = "monogs" }
 orbslam2 = { features = ["orbslam2"], solve-group = "orb" }
@@ -207,6 +207,7 @@ git-clone = 'git clone https://huggingface.co/vslamlab/droidslam-vslamlab Baseli
 execute-mono = 'vslamlab_droidslam_mono'
 execute-rgbd = 'vslamlab_droidslam_rgbd'
 execute-stereo = 'vslamlab_droidslam_stereo'
+setup-blackwell = "python Utilities/setup_droid_blackwell.py"
 
 [feature.droidslam.dependencies]
 droidslam-vslamlab = "*"
@@ -395,13 +396,14 @@ platforms = ["linux-64-cuda"]
 
 [feature.pycuvslam.tasks]
 git-clone = './git-clone.sh VSLAM-LAB PyCuVSLAM-VSLAM-LAB PyCuVSLAM'
-install = { cmd = "pip install -e bin/x86_64", cwd = "Baselines/PyCuVSLAM" }
+install = { cmd = "git lfs install --local && git lfs pull --include='bin/x86_64/cuvslam/*.so' && pip install -e bin/x86_64", cwd = "Baselines/PyCuVSLAM" }
 execute-mono = { cmd = 'export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH && python vslamlab_pycuvslam_mono.py',  cwd = 'Baselines/PyCuVSLAM' }
 execute-rgbd = { cmd = 'export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH && python vslamlab_pycuvslam_rgbd.py',  cwd = 'Baselines/PyCuVSLAM' }
 execute-stereo = { cmd = 'export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH && python vslamlab_pycuvslam_stereo.py',  cwd = 'Baselines/PyCuVSLAM' }
 execute-stereo-vi = { cmd = 'export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH && python vslamlab_pycuvslam_stereo_vi.py',  cwd = 'Baselines/PyCuVSLAM' }
 
 [feature.pycuvslam.dependencies]
+git-lfs = "*"
 libstdcxx-ng = "*"
 numpy = "=2.2.4"
 pillow = "=11.1.0"

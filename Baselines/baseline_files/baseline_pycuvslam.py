@@ -1,4 +1,3 @@
-import os.path
 from pathlib import Path
 from Baselines.BaselineVSLAMLAB import BaselineVSLAMLAB
 
@@ -20,7 +19,18 @@ class PYCUVSLAM_baseline(BaselineVSLAMLAB):
 
     def build_execute_command(self, exp_it, exp, dataset, sequence_name):
         return super().build_execute_command_python(exp_it, exp, dataset, sequence_name)
-        
-    def is_installed(self) -> tuple[bool, str]: 
-        is_installed = os.path.isfile(os.path.join(self.baseline_path, 'install_pycuvslam.txt'))
+
+    @staticmethod
+    def _is_elf(path: Path) -> bool:
+        try:
+            with path.open("rb") as file:
+                return file.read(4) == b"\x7fELF"
+        except OSError:
+            return False
+
+    def is_installed(self) -> tuple[bool, str]:
+        install_log = self.baseline_path / 'install_pycuvslam.txt'
+        runtime = self.baseline_path / 'bin' / 'x86_64' / 'cuvslam'
+        extensions = (runtime / 'libcuvslam.so', runtime / 'pycuvslam.so')
+        is_installed = install_log.is_file() and all(self._is_elf(path) for path in extensions)
         return (True, 'is installed') if is_installed else (False, 'not installed (auto install available)')
