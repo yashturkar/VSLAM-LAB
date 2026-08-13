@@ -32,6 +32,16 @@ class MetricsTests(unittest.TestCase):
             )
             self.assertAlmostEqual(aligned_rotation_rmse(evaluation, "00000"), 0.0)
 
+    def test_rotation_rmse_associates_nearby_nanosecond_timestamps(self):
+        with tempfile.TemporaryDirectory() as directory:
+            evaluation = Path(directory)
+            predicted = evaluation / "00000_KeyFrameTrajectory.tum"
+            groundtruth = evaluation / "00000_gt.tum"
+            predicted.write_text("1700000000000000000 0 0 0 0 0 0 1\n", encoding="utf-8")
+            groundtruth.write_text("1700000000005000000 0 0 0 0 0 0 1\n", encoding="utf-8")
+
+            self.assertAlmostEqual(aligned_rotation_rmse(evaluation, "00000"), 0.0)
+
     def test_zero_coverage_writes_null_weighted_rmse(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

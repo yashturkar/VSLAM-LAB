@@ -75,7 +75,11 @@ def extract_ate_metrics(ate_csv: Path, exp_it: str) -> dict[str, float] | None:
         return None
 
 
-def aligned_rotation_rmse(evaluation_folder: Path, exp_it: str) -> float | None:
+def aligned_rotation_rmse(
+    evaluation_folder: Path,
+    exp_it: str,
+    max_time_difference: float = 0.1,
+) -> float | None:
     """Compute absolute rotation RMSE from evo's timestamp-aligned trajectories."""
     predicted_path = evaluation_folder / f"{exp_it}_{TRAJECTORY_FILE_NAME}.tum"
     groundtruth_path = evaluation_folder / f"{exp_it}_gt.tum"
@@ -86,13 +90,26 @@ def aligned_rotation_rmse(evaluation_folder: Path, exp_it: str) -> float | None:
     if len(predicted.columns) < 8 or len(groundtruth.columns) < 8:
         return None
     try:
+        columns = ["ts", "tx", "ty", "tz", "qx", "qy", "qz", "qw"]
         predicted = predicted.iloc[:, :8].apply(pd.to_numeric, errors="coerce").dropna()
         groundtruth = groundtruth.iloc[:, :8].apply(pd.to_numeric, errors="coerce").dropna()
-        matched = predicted.merge(groundtruth, on=predicted.columns[0], suffixes=("_pred", "_gt"))
+        predicted.columns = columns
+        groundtruth.columns = columns
+        predicted["ts"] = predicted["ts"].astype(float)
+        groundtruth["ts"] = groundtruth["ts"].astype(float)
+        timestamp_scale = 1e9 if max(predicted["ts"].abs().max(), groundtruth["ts"].abs().max()) > 1e12 else 1.0
+        matched = pd.merge_asof(
+            predicted.sort_values("ts"),
+            groundtruth.sort_values("ts"),
+            on="ts",
+            direction="nearest",
+            tolerance=max_time_difference * timestamp_scale,
+            suffixes=("_pred", "_gt"),
+        ).dropna()
         if matched.empty:
             return None
-        pred_rotation = Rotation.from_quat(matched.iloc[:, 4:8].to_numpy(dtype=float))
-        gt_rotation = Rotation.from_quat(matched.iloc[:, 11:15].to_numpy(dtype=float))
+        pred_rotation = Rotation.from_quat(matched[["qx_pred", "qy_pred", "qz_pred", "qw_pred"]].to_numpy())
+        gt_rotation = Rotation.from_quat(matched[["qx_gt", "qy_gt", "qz_gt", "qw_gt"]].to_numpy())
         errors = (pred_rotation.inv() * gt_rotation).magnitude()
     except (TypeError, ValueError):
         return None
