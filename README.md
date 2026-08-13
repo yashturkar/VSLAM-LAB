@@ -160,6 +160,19 @@ OpenCV left-to-right transform in the sequence calibration as flattened `Stereo.
 The measured rig values are recorded in `configs/calibration_lightning_stereo.yaml`.
 Examples for `101backdoor_p0.0_extract` are provided for ORB-SLAM2 and ORB-SLAM3 stereo.
 
+Synchronized ROS 2 MCAP recordings can be converted directly when they contain the
+default `image_preview`, `camera_info`, and `/odometry` topics:
+
+```bash
+pixi exec --spec uv uv run Utilities/extract_lightning_mcap.py \
+  --bag /path/to/research-bag_0.mcap \
+  --output /path/to/vslamlab/sequence_name
+```
+
+Use the extractor's topic arguments when a recording uses different names. It rectifies
+both image streams from `camera_info`, writes synchronized stereo metadata, and exports
+`/odometry` as ground truth.
+
 ### Shared runtime storage
 
 Keep Pixi environments, baseline checkouts, checkpoints, and model caches off the
@@ -181,6 +194,13 @@ PyTorch wheel and rebuild the MASt3R matching kernels once with:
 
 ```bash
 pixi run -e mast3rslam setup-blackwell
+```
+
+DROID-SLAM also ships custom CUDA extensions. Rebuild its DROID, lietorch, and
+torch-scatter kernels once on Blackwell with:
+
+```bash
+pixi run -e droidslam setup-blackwell
 ```
 
 ## Add a new VSLAM Dataset

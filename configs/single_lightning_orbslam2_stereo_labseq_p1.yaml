@@ -1,0 +1,8 @@
+DATASET:
+  base_path: /mnt/share/local/eph/clid-dataset/davis-lightning-11-25-2025/Sequences/Processed/labseq_p1.0_extract/labseq_p1.0_fixed
+  name: labseq_p1.0_fixed
+  baseline: orbslam2
+  dataset: lightning
+  sensor_type: stereo
+  groundtruth_format: kitti
+  output_dir: output/orbslam2_stereo

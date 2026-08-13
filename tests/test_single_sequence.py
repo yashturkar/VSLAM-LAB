@@ -127,6 +127,24 @@ class SingleSequenceTests(unittest.TestCase):
             sequence = LightningDataset().prepare_local_sequence(root, name)
             self.assertEqual((sequence / "rgb_0").resolve(), image_dir.resolve())
 
+    def test_already_prepared_lightning_sequence_infers_frame_rate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            name = "native"
+            sequence = root / name
+            (sequence / "rgb_0").mkdir(parents=True)
+            (sequence / "rgb.csv").write_text(
+                "ts_rgb_0 (ns),path_rgb_0\n1000000000,rgb_0/a.png\n1100000000,rgb_0/b.png\n",
+                encoding="utf-8",
+            )
+            (sequence / "calibration.yaml").write_text("cameras: []\n", encoding="utf-8")
+            (sequence / "groundtruth.csv").write_text("ts (ns),tx (m)\n", encoding="utf-8")
+
+            dataset = LightningDataset()
+            dataset.prepare_local_sequence(root, name)
+
+            self.assertAlmostEqual(dataset.rgb_hz, 10.0)
+
     def test_legacy_absolute_module_path_remains_supported(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

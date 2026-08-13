@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import os
 from pathlib import Path
 from typing import Any
@@ -55,6 +56,7 @@ class LightningDataset(DatasetVSLAMLAB):
             self.groundtruth_csv_path(sequence_name),
         )
         if all(path.exists() for path in required):
+            self._update_rgb_hz(self.rgb_csv_path(sequence_name))
             raw_times = base_path / "sequences" / sequence_name / "times.txt"
             calibration_source = self._find_calibration(base_path)
             if raw_times.is_file() and calibration_source.is_file():
@@ -109,6 +111,19 @@ class LightningDataset(DatasetVSLAMLAB):
             stereo=bool(right_images),
         )
         return sequence_path
+
+    def _update_rgb_hz(self, rgb_csv: Path) -> None:
+        """Infer camera cadence for already-native sequences from their timestamps."""
+        with rgb_csv.open(newline="", encoding="utf-8") as file:
+            reader = csv.reader(file)
+            next(reader, None)
+            timestamps = [int(row[0]) for row in reader if row and row[0]]
+        if len(timestamps) < 2:
+            return
+        intervals = np.diff(np.asarray(timestamps, dtype=np.int64)) / 1e9
+        positive_intervals = intervals[intervals > 0]
+        if positive_intervals.size:
+            self.rgb_hz = float(1.0 / np.median(positive_intervals))
 
     @staticmethod
     def _images(folder: Path) -> list[Path]:

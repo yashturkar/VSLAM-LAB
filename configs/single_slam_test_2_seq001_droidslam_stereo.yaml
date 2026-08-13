@@ -1,0 +1,8 @@
+DATASET:
+  base_path: /home/yashturkar/Downloads/sequence-samples/slam-test-2_seq001_20260812_201157_144879/vslamlab
+  name: slam-test-2_seq001
+  baseline: droidslam
+  dataset: lightning
+  sensor_type: stereo
+  groundtruth_format: kitti
+  output_dir: output/droidslam_stereo

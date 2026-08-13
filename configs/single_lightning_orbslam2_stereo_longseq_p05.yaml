@@ -1,0 +1,8 @@
+DATASET:
+  base_path: /mnt/share/local/eph/clid-dataset/davis-lightning-11-25-2025/Sequences/Processed/longseq_p0.5_extract/longseq_p0.5
+  name: longseq_p0.5
+  baseline: orbslam2
+  dataset: lightning
+  sensor_type: stereo
+  groundtruth_format: kitti
+  output_dir: output/orbslam2_stereo
