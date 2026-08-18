@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 from Baselines.get_baseline import get_baseline, list_available_baselines
 from Datasets.DatasetVSLAMLAB import DatasetVSLAMLAB
@@ -245,31 +245,44 @@ def _write_report(trajectory: Path, groundtruth: Path, output: Path, title: str)
     plt.close(figure)
 
 
-def run_single(config_yaml: str | Path, evaluate: bool) -> Path:
-    config, dataset, baseline, experiment, run_folder = _prepare(config_yaml, headless=evaluate)
+def run_single_baseline(config_yaml: str | Path, headless: bool = True) -> Path:
+    """Run the configured baseline and copy its trajectory to the output folder."""
+    config, dataset, baseline, experiment, run_folder = _prepare(config_yaml, headless=headless)
     print_msg(f"\n{SCRIPT_LABEL}", f"Running {config.baseline} on {config.name}")
-    with headless_environment(evaluate):
+    with headless_environment(headless):
         results = run_sequence(0, experiment, baseline, dataset, config.name)
     trajectory = _trajectory(run_folder)
     config.output_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(trajectory, config.output_dir / trajectory.name)
+    destination = config.output_dir / trajectory.name
+    shutil.copy2(trajectory, destination)
     if not results.get("success", False):
         print_msg(
             f"{ws(4)}",
             "Baseline reported failure but produced a usable trajectory",
             "warning",
         )
-    if not evaluate:
-        return trajectory
+    return destination
 
-    groundtruth = run_folder / "groundtruth.csv"
+
+def evaluate_single_trajectory(
+    config_yaml: str | Path,
+    trajectory: str | Path,
+    fast_lio_progress: Callable[[dict[str, Any]], None] | None = None,
+) -> Path:
+    """Evaluate an existing trajectory and generate/reuse optional references."""
+    config = SingleSequenceConfig.load(config_yaml)
+    trajectory = Path(trajectory).expanduser().resolve()
+    if not trajectory.is_file():
+        raise FileNotFoundError(f"Trajectory is required for evaluation: {trajectory}")
+    groundtruth = config.base_path / config.name / "groundtruth.csv"
     if not groundtruth.exists():
         raise FileNotFoundError(f"Ground truth is required for evaluation: {groundtruth}")
+    config.output_dir.mkdir(parents=True, exist_ok=True)
     fast_lio_trajectory: Path | None = None
     warnings: list[str] = []
     if fast_lio_reference_enabled(config_yaml):
         print_msg(f"{ws(4)}", "Generating or reusing FAST-LIO reference")
-        fast_lio_trajectory = generate_fast_lio_reference(config_yaml)
+        fast_lio_trajectory = generate_fast_lio_reference(config_yaml, progress=fast_lio_progress)
         fast_lio_manifest = fast_lio_trajectory.parent / "manifest.json"
         if fast_lio_manifest.is_file():
             shutil.copy2(fast_lio_manifest, config.output_dir / "fast_lio_manifest.json")
@@ -294,6 +307,13 @@ def run_single(config_yaml: str | Path, evaluate: bool) -> Path:
     )
     print_msg(f"{ws(4)}", f"Results saved to {config.output_dir}")
     return metrics
+
+
+def run_single(config_yaml: str | Path, evaluate: bool) -> Path:
+    trajectory = run_single_baseline(config_yaml, headless=evaluate)
+    if not evaluate:
+        return trajectory
+    return evaluate_single_trajectory(config_yaml, trajectory)
 
 
 def eval_metrics_single(config_yaml: str | Path) -> Path:

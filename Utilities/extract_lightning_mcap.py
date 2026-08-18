@@ -14,8 +14,9 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import cv2
 import numpy as np
@@ -85,26 +86,30 @@ def write_csv(path: Path, header: list[str], rows: list[list[Any]]) -> None:
     temporary.replace(path)
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--bag", required=True, type=Path, help="MCAP file")
-    parser.add_argument("--output", required=True, type=Path, help="VSLAM-LAB sequence directory")
-    parser.add_argument("--left-topic", default="/cam_sync/cam0/image_preview/compressed")
-    parser.add_argument("--right-topic", default="/cam_sync/cam1/image_preview/compressed")
-    parser.add_argument("--left-info-topic", default="/cam_sync/cam0/camera_info")
-    parser.add_argument("--right-info-topic", default="/cam_sync/cam1/camera_info")
-    parser.add_argument("--odometry-topic", default="/odometry")
-    args = parser.parse_args()
-
-    bag_path = args.bag.expanduser().resolve()
-    output = args.output.expanduser().resolve()
+def extract_sequence(
+    bag_path: Path,
+    output: Path,
+    *,
+    left_topic: str = "/cam_sync/cam0/image_preview/compressed",
+    right_topic: str = "/cam_sync/cam1/image_preview/compressed",
+    left_info_topic: str = "/cam_sync/cam0/camera_info",
+    right_info_topic: str = "/cam_sync/cam1/camera_info",
+    odometry_topic: str = "/odometry",
+    expected_pairs: int | None = None,
+    overwrite_images: bool = False,
+    progress: Callable[[dict[str, Any]], None] | None = None,
+    source_fingerprint: str | dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Extract one processed LIGHTNING MCAP and return its metadata."""
+    bag_path = bag_path.expanduser().resolve()
+    output = output.expanduser().resolve()
     if not bag_path.is_file():
         raise FileNotFoundError(bag_path)
     left_folder, right_folder = output / "rgb_0", output / "rgb_1"
     left_folder.mkdir(parents=True, exist_ok=True)
     right_folder.mkdir(parents=True, exist_ok=True)
 
-    info_topics = (args.left_info_topic, args.right_info_topic)
+    info_topics = (left_info_topic, right_info_topic)
     info = read_camera_info(bag_path, info_topics)
     left_camera, left_distortion, left_rectification, left_projection, left_size = camera_values(info[info_topics[0]])
     right_camera, right_distortion, right_rectification, right_projection, right_size = camera_values(info[info_topics[1]])
@@ -121,16 +126,18 @@ def main() -> None:
         right_camera, right_distortion, right_rectification, rectified_camera, right_size, cv2.CV_16SC2
     )
 
-    image_topics = {args.left_topic: (left_folder, left_maps), args.right_topic: (right_folder, right_maps)}
+    image_topics = {left_topic: (left_folder, left_maps), right_topic: (right_folder, right_maps)}
     image_paths: dict[str, dict[int, str]] = {topic: {} for topic in image_topics}
     odometry: dict[int, list[Any]] = {}
-    topics = [*image_topics, args.odometry_topic]
+    topics = [*image_topics, odometry_topic]
+    started = time.monotonic()
+    last_reported = 0
     with bag_path.open("rb") as stream:
         reader = make_reader(stream, decoder_factories=[DecoderFactory()])
         for _, channel, _, message in reader.iter_decoded_messages(topics=topics):
             topic = channel.topic
             stamp = timestamp_ns(message)
-            if topic == args.odometry_topic:
+            if topic == odometry_topic:
                 pose = message.pose.pose
                 odometry.setdefault(
                     stamp,
@@ -157,14 +164,24 @@ def main() -> None:
                 raise ValueError(f"Unexpected image size at {stamp}: {image.shape[1]}x{image.shape[0]}")
             rectified = cv2.remap(image, *maps, interpolation=cv2.INTER_LINEAR)
             destination = folder / f"{stamp}.png"
-            if not destination.exists() and not cv2.imwrite(str(destination), rectified):
+            if (overwrite_images or not destination.exists()) and not cv2.imwrite(str(destination), rectified):
                 raise RuntimeError(f"Could not write {destination}")
             image_paths[topic][stamp] = f"{folder.name}/{destination.name}"
             count = len(image_paths[topic])
             if count % 100 == 0:
                 print(f"{topic}: {count} unique frames", flush=True)
+            paired_so_far = len(image_paths[left_topic].keys() & image_paths[right_topic].keys())
+            if progress is not None and paired_so_far >= last_reported + 25:
+                elapsed = max(time.monotonic() - started, 1e-9)
+                progress({
+                    "frames": paired_so_far,
+                    "total": expected_pairs,
+                    "rate_fps": paired_so_far / elapsed,
+                    "elapsed_s": elapsed,
+                })
+                last_reported = paired_so_far
 
-    left, right = image_paths[args.left_topic], image_paths[args.right_topic]
+    left, right = image_paths[left_topic], image_paths[right_topic]
     paired_stamps = sorted(left.keys() & right.keys())
     if not paired_stamps:
         raise RuntimeError("No exactly synchronized stereo frames found")
@@ -184,10 +201,13 @@ def main() -> None:
     )
     write_calibration(output / "calibration.yaml", left_projection, baseline, fps, left_size)
     metadata = {
+        "schema_version": 2,
+        "status": "complete",
         "source_bag": str(bag_path),
-        "left_topic": args.left_topic,
-        "right_topic": args.right_topic,
-        "odometry_topic": args.odometry_topic,
+        "source_fingerprint": source_fingerprint,
+        "left_topic": left_topic,
+        "right_topic": right_topic,
+        "odometry_topic": odometry_topic,
         "groundtruth_frame": "odom -> body (camera extrinsic unavailable in bag TF)",
         "stereo_pairs": len(paired_stamps),
         "odometry_poses": len(odometry),
@@ -197,7 +217,34 @@ def main() -> None:
         "baseline_m": baseline,
     }
     (output / "extraction_metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
+    if progress is not None:
+        elapsed = max(time.monotonic() - started, 1e-9)
+        progress({"frames": len(paired_stamps), "total": len(paired_stamps), "rate_fps": len(paired_stamps) / elapsed, "elapsed_s": elapsed})
     print(f"Prepared {output}: {len(paired_stamps)} stereo pairs, {len(odometry)} GT poses, {fps:.6f} Hz")
+    return metadata
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--bag", required=True, type=Path, help="MCAP file")
+    parser.add_argument("--output", required=True, type=Path, help="VSLAM-LAB sequence directory")
+    parser.add_argument("--left-topic", default="/cam_sync/cam0/image_preview/compressed")
+    parser.add_argument("--right-topic", default="/cam_sync/cam1/image_preview/compressed")
+    parser.add_argument("--left-info-topic", default="/cam_sync/cam0/camera_info")
+    parser.add_argument("--right-info-topic", default="/cam_sync/cam1/camera_info")
+    parser.add_argument("--odometry-topic", default="/odometry")
+    parser.add_argument("--force", action="store_true", help="Overwrite existing extracted images")
+    args = parser.parse_args()
+    extract_sequence(
+        args.bag,
+        args.output,
+        left_topic=args.left_topic,
+        right_topic=args.right_topic,
+        left_info_topic=args.left_info_topic,
+        right_info_topic=args.right_info_topic,
+        odometry_topic=args.odometry_topic,
+        overwrite_images=args.force,
+    )
 
 
 if __name__ == "__main__":

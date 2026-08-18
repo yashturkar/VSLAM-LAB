@@ -111,6 +111,21 @@ demo-fastlio.args = [
   { "arg" = "config_yaml", "default" = "configs/single_lightning.yaml" }
 ]
 
+lightning-fastlio.cmd = "python Utilities/lightning_fastlio_pipeline.py run {{ bag_root }}"
+lightning-fastlio.args = [
+  { "arg" = "bag_root" }
+]
+
+lightning-fastlio-check.cmd = "python Utilities/lightning_fastlio_pipeline.py check {{ bag_root }}"
+lightning-fastlio-check.args = [
+  { "arg" = "bag_root" }
+]
+
+lightning-fastlio-status.cmd = "python Utilities/lightning_fastlio_pipeline.py status {{ bag_root }}"
+lightning-fastlio-status.args = [
+  { "arg" = "bag_root" }
+]
+
 get-resources.cmd = "python vslamlab_gui.py get-resources {{ exp_yaml }}"
 get-resources.args = [
   { "arg" = "exp_yaml", "default" = "configs/exp_vslamlab.yaml" }

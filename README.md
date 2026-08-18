@@ -130,6 +130,7 @@ pixi run eval-metrics-single <config_yaml>               # Headless custom-seque
 pixi run demo-single <config_yaml>                       # GUI custom-sequence demo
 pixi run fastlio-reference <config_yaml>                 # Generate/reuse a FAST-LIO reference
 pixi run demo-fastlio <config_yaml>                      # FAST-LIO playback with RViz
+pixi run lightning-fastlio <processed_sequence_root>     # Stage, extract, run, and evaluate
 ```
 
 ### Research evaluation workflows
@@ -216,6 +217,45 @@ those transforms are supplied. Robot-reference associations use the configured 2
 window. For direct VSLAM-to-FAST-LIO evaluation, the approximately 1 Hz corrected
 FAST-LIO `/path` is linearly interpolated in position and quaternion-Slerped at VSLAM
 timestamps before EVO alignment and metric calculation.
+
+#### One-command resumable pipeline
+
+A processed CLID sequence root can be staged and evaluated end to end with one
+foreground command:
+
+```bash
+pixi run -e vslamlab lightning-fastlio \
+  /mnt/share/nas/eph/clid-v2-sequences/session/sequence
+```
+
+The command validates the recording and required topics, checks disk space and
+runtimes, stages `research-bag` under `/mnt/share/local/eph/VSLAM`, extracts the
+stereo dataset, runs ORB-SLAM2 and FAST-LIO, and writes pairwise metrics. Source paths
+are opened read-only, and outputs beneath `/mnt/share/nas` or inside the source tree
+are refused.
+
+Every stage records fingerprints and integrity checks in `pipeline.json`. Repeating
+the command prints `SKIP (verified)` for valid work and resumes the first missing,
+partial, or stale stage. Progress and failures are appended to `pipeline.log`.
+
+```bash
+pixi run -e vslamlab lightning-fastlio-check <processed_sequence_root>
+pixi run -e vslamlab lightning-fastlio-status <processed_sequence_root>
+```
+
+Advanced recovery and path overrides use the underlying CLI:
+
+```bash
+pixi run -e vslamlab python Utilities/lightning_fastlio_pipeline.py run \
+  <processed_sequence_root> --force-from fastlio
+
+pixi run -e vslamlab python Utilities/lightning_fastlio_pipeline.py run \
+  <processed_sequence_root> --local-root /mnt/share/local/eph/VSLAM
+```
+
+`--force-from` accepts `stage`, `extract`, `config`, `orbslam2`, `fastlio`, or
+`metrics` and reruns that stage and every downstream stage. Version one requires one
+indexed MCAP inside `research-bag`; split processed research bags fail preflight.
 
 ### Shared runtime storage
 

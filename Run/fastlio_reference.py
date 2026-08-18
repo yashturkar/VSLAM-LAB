@@ -12,7 +12,7 @@ import subprocess
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 import yaml
@@ -249,7 +249,12 @@ def _cached(manifest_path: Path, trajectory: Path, fingerprint: dict[str, Any]) 
     return manifest.get("status") == "complete" and manifest.get("fingerprint") == fingerprint and sum(1 for _ in trajectory.open()) >= 4
 
 
-def generate_fast_lio_reference(config_yaml: str | Path, force: bool = False, rviz: bool = False) -> Path:
+def generate_fast_lio_reference(
+    config_yaml: str | Path,
+    force: bool = False,
+    rviz: bool = False,
+    progress: Callable[[dict[str, Any]], None] | None = None,
+) -> Path:
     settings = load_fast_lio_settings(config_yaml)
     output = settings["sequence"] / "references/fast_lio"
     output.mkdir(parents=True, exist_ok=True)
@@ -257,6 +262,8 @@ def generate_fast_lio_reference(config_yaml: str | Path, force: bool = False, rv
     fingerprint = build_fingerprint(settings)
     if not force and not rviz and _cached(manifest_path, trajectory, fingerprint):
         print(f"Reusing FAST-LIO reference: {trajectory}")
+        if progress is not None:
+            progress({"cached": True, "percent": 100.0, "pose_count": sum(1 for _ in trajectory.open()) - 1})
         return trajectory
 
     sensor_times, record_times, pointcloud = extract_ouster_clock_samples(settings["source_bag"])
@@ -321,7 +328,32 @@ def generate_fast_lio_reference(config_yaml: str | Path, force: bool = False, rv
         player_command = ["/usr/bin/python3", str(PLAYER), str(bag_dir), "--rate", "1.0"]
         with logs["rosbag"].open("w", encoding="utf-8") as log:
             player = subprocess.Popen(_shell_command(settings["workspace"], player_command), stdout=log, stderr=subprocess.STDOUT, env=environment, start_new_session=True)
-            exit_code = player.wait(timeout=max(180, int((record_times[-1] - record_times[0]) * 2 + 60)))
+            playback_duration = max(float(record_times[-1] - record_times[0]), 0.001)
+            timeout_s = max(180, int(playback_duration * 2 + 60))
+            playback_started = time.monotonic()
+            while player.poll() is None:
+                elapsed = time.monotonic() - playback_started
+                if elapsed > timeout_s:
+                    raise subprocess.TimeoutExpired(player.args, timeout_s)
+                pose_count = max(0, sum(1 for _ in raw_path.open()) if raw_path.exists() else 0)
+                event = {
+                    "cached": False,
+                    "elapsed_s": elapsed,
+                    "duration_s": playback_duration,
+                    "percent": min(99.0, elapsed / playback_duration * 100.0),
+                    "eta_s": max(0.0, playback_duration - elapsed),
+                    "pose_count": pose_count,
+                }
+                if progress is not None:
+                    progress(event)
+                elif int(elapsed) % 15 == 0:
+                    print(
+                        f"FAST-LIO playback {event['percent']:.1f}% "
+                        f"({pose_count} poses, ETA {event['eta_s']:.0f}s)",
+                        flush=True,
+                    )
+                time.sleep(1.0)
+            exit_code = player.returncode
         if exit_code != 0:
             raise RuntimeError(f"rosbag playback exited with {exit_code}; inspect {logs['rosbag']}")
         time.sleep(5)
@@ -345,6 +377,8 @@ def generate_fast_lio_reference(config_yaml: str | Path, force: bool = False, rv
         "logs": {name: str(path) for name, path in logs.items()},
     })
     write_json(manifest_path, report)
+    if progress is not None:
+        progress({"cached": False, "percent": 100.0, "pose_count": pose_count, "complete": True})
     print(f"Generated FAST-LIO reference with {pose_count} poses: {trajectory}")
     return trajectory
 
