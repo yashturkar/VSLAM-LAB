@@ -15,8 +15,8 @@ from typing import Any, Iterator
 from Baselines.get_baseline import get_baseline, list_available_baselines
 from Datasets.DatasetVSLAMLAB import DatasetVSLAMLAB
 from Datasets.get_dataset import get_dataset, list_available_datasets
-from Evaluate.evo_functions import evo_get_accuracy, evo_metric
-from Evaluate.metrics_json import write_metrics_json
+from Evaluate.pairwise_metrics import write_combined_report, write_pairwise_metrics
+from Run.fastlio_reference import fast_lio_reference_enabled, generate_fast_lio_reference
 from Run.run_functions import run_sequence
 from path_constants import TRAJECTORY_FILE_NAME, VSLAM_LAB_DIR
 from utilities import load_yaml_file, print_msg, ws
@@ -34,6 +34,7 @@ class SingleSequenceConfig:
     sensor_type: str = "mono"
     groundtruth_format: str = "kitti"
     parameters: dict[str, Any] = field(default_factory=dict)
+    max_time_difference_s: float = 0.02
 
     @classmethod
     def load(cls, config_yaml: str | Path) -> "SingleSequenceConfig":
@@ -59,6 +60,12 @@ class SingleSequenceConfig:
         parameters = section.get("parameters", {})
         if not isinstance(parameters, dict):
             raise ValueError("DATASET.parameters must be a mapping")
+        evaluation = data.get("EVALUATION", {})
+        if not isinstance(evaluation, dict):
+            raise ValueError("EVALUATION must be a mapping")
+        max_time_difference_s = float(evaluation.get("max_time_difference_s", 0.02))
+        if max_time_difference_s <= 0:
+            raise ValueError("EVALUATION.max_time_difference_s must be positive")
         return cls(
             base_path=base_path,
             name=str(section["name"]),
@@ -68,6 +75,7 @@ class SingleSequenceConfig:
             sensor_type=str(section.get("sensor_type", "mono")),
             groundtruth_format=str(section.get("groundtruth_format", "kitti")),
             parameters=dict(parameters),
+            max_time_difference_s=max_time_difference_s,
         )
 
 
@@ -257,26 +265,30 @@ def run_single(config_yaml: str | Path, evaluate: bool) -> Path:
     groundtruth = run_folder / "groundtruth.csv"
     if not groundtruth.exists():
         raise FileNotFoundError(f"Ground truth is required for evaluation: {groundtruth}")
-    evaluation_folder = run_folder / "vslamlab_evaluation"
-    evaluation_folder.mkdir(parents=True, exist_ok=True)
-    success, message = evo_metric("ate", groundtruth, trajectory, evaluation_folder, 1e9 / float(dataset.rgb_hz))
-    if success:
-        archive = evaluation_folder / f"00000_{TRAJECTORY_FILE_NAME}.zip"
-        if archive.exists():
-            evo_get_accuracy([archive], evaluation_folder / "ate.csv")
-    else:
-        print_msg(f"{ws(4)}", f"Evaluation failed: {message}", "warning")
-    metrics = write_metrics_json(
+    fast_lio_trajectory: Path | None = None
+    warnings: list[str] = []
+    if fast_lio_reference_enabled(config_yaml):
+        print_msg(f"{ws(4)}", "Generating or reusing FAST-LIO reference")
+        fast_lio_trajectory = generate_fast_lio_reference(config_yaml)
+        fast_lio_manifest = fast_lio_trajectory.parent / "manifest.json"
+        if fast_lio_manifest.is_file():
+            shutil.copy2(fast_lio_manifest, config.output_dir / "fast_lio_manifest.json")
+        warnings.append(
+            "Camera/body and Ouster/body mount extrinsics are unavailable; cross-sensor "
+            "comparisons use trajectory-derived alignment. Translation and especially "
+            "rotation metrics are approximate until those fixed transforms are supplied."
+        )
+    metrics, aligned = write_pairwise_metrics(
         config.output_dir / "metrics.json",
         trajectory,
         groundtruth,
-        evaluation_folder,
-        "00000",
-        "SUCCESS" if success else "FAILURE",
+        fast_lio_trajectory,
+        config.max_time_difference_s,
+        config.sensor_type,
+        warnings,
     )
-    _write_report(
-        trajectory,
-        groundtruth,
+    write_combined_report(
+        aligned,
         config.output_dir / "trajectory_report.pdf",
         f"{config.baseline}: {config.name}",
     )

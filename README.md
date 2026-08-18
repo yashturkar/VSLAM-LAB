@@ -128,6 +128,8 @@ pixi run compare-exp <exp_yaml>                          # Example: pixi run com
 pixi run eval-metrics <exp_yaml>                         # Run, evaluate, and write metrics.json
 pixi run eval-metrics-single <config_yaml>               # Headless custom-sequence evaluation
 pixi run demo-single <config_yaml>                       # GUI custom-sequence demo
+pixi run fastlio-reference <config_yaml>                 # Generate/reuse a FAST-LIO reference
+pixi run demo-fastlio <config_yaml>                      # FAST-LIO playback with RViz
 ```
 
 ### Research evaluation workflows
@@ -172,6 +174,48 @@ pixi exec --spec uv uv run Utilities/extract_lightning_mcap.py \
 Use the extractor's topic arguments when a recording uses different names. It rectifies
 both image streams from `camera_info`, writes synchronized stereo metadata, and exports
 `/odometry` as ground truth.
+
+#### FAST-LIO reference evaluation
+
+On Ubuntu 22.04, install native ROS 2 Humble and the pinned SPARK FAST-LIO workspace:
+
+```bash
+Utilities/setup_fastlio_humble.sh
+```
+
+The setup installs ROS 2 Desktop, MCAP support and build tools, then builds
+`MIT-SPARK/spark-fast-lio` in `~/humble_ws`. It does not edit shell startup files;
+the VSLAM-LAB runner sources the ROS environments explicitly.
+
+Enable the reference in a single-sequence config whose extracted sequence contains
+`extraction_metadata.json`:
+
+```yaml
+EVALUATION:
+  max_time_difference_s: 0.02
+  fast_lio:
+    enabled: true
+    workspace: /home/yashturkar/humble_ws
+```
+
+Generate or inspect the LiDAR trajectory independently:
+
+```bash
+pixi run -e vslamlab fastlio-reference configs/single_slam_test_2_seq001_orbslam2_stereo.yaml
+pixi run -e vslamlab fastlio-reference configs/single_slam_test_2_seq001_orbslam2_stereo.yaml --force
+pixi run -e vslamlab demo-fastlio configs/single_slam_test_2_seq001_orbslam2_stereo.yaml
+```
+
+`eval-metrics-single` automatically generates or reuses the same sequence-level cache.
+Its schema-v2 `metrics.json` reports VSLAM vs robot odometry, FAST-LIO vs robot
+odometry, and VSLAM vs FAST-LIO through EVO. Metric stereo and LiDAR trajectories use
+rigid SE(3) alignment without scale correction; monocular VSLAM uses Sim(3). The bags
+do not contain measured camera/body and Ouster/body mount transforms, so cross-sensor
+translation and especially rotation results are explicitly marked as approximate until
+those transforms are supplied. Robot-reference associations use the configured 20 ms
+window. For direct VSLAM-to-FAST-LIO evaluation, the approximately 1 Hz corrected
+FAST-LIO `/path` is linearly interpolated in position and quaternion-Slerped at VSLAM
+timestamps before EVO alignment and metric calculation.
 
 ### Shared runtime storage
 

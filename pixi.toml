@@ -100,6 +100,17 @@ demo-single.args = [
   { "arg" = "config_yaml", "default" = "configs/single_lightning.yaml" }
 ]
 
+fastlio-reference.cmd = "python vslamlab_gui.py fastlio_reference {{ config_yaml }} {{ force }}"
+fastlio-reference.args = [
+  { "arg" = "config_yaml", "default" = "configs/single_lightning.yaml" },
+  { "arg" = "force", "default" = " " },
+]
+
+demo-fastlio.cmd = "python vslamlab_gui.py demo_fastlio {{ config_yaml }}"
+demo-fastlio.args = [
+  { "arg" = "config_yaml", "default" = "configs/single_lightning.yaml" }
+]
+
 get-resources.cmd = "python vslamlab_gui.py get-resources {{ exp_yaml }}"
 get-resources.args = [
   { "arg" = "exp_yaml", "default" = "configs/exp_vslamlab.yaml" }
@@ -173,6 +184,7 @@ evo = "==1.34.3"
 git-lfs = "*"
 piexif = "*"
 psutil = "*"
+
 loguru = "*"
 utm = "*"
 7zip = "*"
@@ -181,6 +193,10 @@ open3d = "*"
 gdown = "*"
 yt-dlp = "*"
 cryptography = "*"
+
+[feature.vslamlab.pypi-dependencies]
+mcap = ">=1.3"
+mcap-ros2-support = ">=0.5"
 
 [feature.development.tasks]
 validate-dataset.cmd = 'python validate_dataset.py {{ dataset_name }}'
