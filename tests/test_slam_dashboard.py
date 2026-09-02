@@ -1,4 +1,6 @@
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -54,6 +56,16 @@ class SlamDashboardTests(unittest.TestCase):
             self.assertIn("orbslam2", run_dir.name)
             self.assertTrue(popen.call_args.kwargs["start_new_session"])
 
+    def test_worker_entrypoint_can_import_repository_modules(self):
+        result = subprocess.run(
+            [sys.executable, "Utilities/web_slam_worker.py", "--help"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--sequence", result.stdout)
+
     def test_discovers_completed_run_history(self):
         with tempfile.TemporaryDirectory() as directory:
             local = Path(directory)
@@ -86,14 +98,22 @@ class SlamDashboardTests(unittest.TestCase):
             row = [[1, 1, 2, 3, 0, 0, 0, 1]]
             pd.DataFrame(row, columns=columns).to_csv(output / "00000_KeyFrameTrajectory.csv", index=False)
             pd.DataFrame(row, columns=columns).to_csv(sequence / "groundtruth.csv", index=False)
+            fast_lio = sequence / "references/fast_lio"
+            fast_lio.mkdir(parents=True)
+            pd.DataFrame(row, columns=columns).to_csv(fast_lio / "trajectory.csv", index=False)
             (output / "metrics.json").write_text(json.dumps({"comparisons": {
                 "vslam_vs_robot_odometry": {"alignment": {
                     "rotation": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
                     "translation_m": [10, 0, 0], "scale": 1,
-                }}
+                }},
+                "fast_lio_vs_robot_odometry": {"alignment": {
+                    "rotation": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+                    "translation_m": [0, 5, 0], "scale": 1,
+                }},
             }}))
             frames = trajectory_frames({"run_dir": str(run), "prepared_sequence": str(sequence)})
             self.assertEqual(frames["vslam"].iloc[0]["x"], 11)
+            self.assertEqual(frames["fast lio"].iloc[0]["y"], 7)
 
 
 if __name__ == "__main__":

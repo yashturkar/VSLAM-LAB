@@ -6,15 +6,20 @@ from __future__ import annotations
 import argparse
 import fcntl
 import json
+import sys
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
 
-from Baselines.get_baseline import get_baseline, list_available_baselines
-from Run.single_sequence import evaluate_single_trajectory, run_single_baseline
-from Utilities.lightning_fastlio_pipeline import Pipeline, PipelinePaths, atomic_json, parse_topic_counts
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from Baselines.get_baseline import get_baseline, list_available_baselines  # noqa: E402
+from Run.single_sequence import evaluate_single_trajectory, run_single_baseline  # noqa: E402
+from Utilities.lightning_fastlio_pipeline import Pipeline, PipelinePaths, atomic_json, parse_topic_counts  # noqa: E402
 
 
 def now() -> str:
