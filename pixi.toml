@@ -126,6 +126,8 @@ lightning-fastlio-status.args = [
   { "arg" = "bag_root" }
 ]
 
+slam-viewer = "streamlit run streamlit_app.py --server.address 0.0.0.0"
+
 get-resources.cmd = "python vslamlab_gui.py get-resources {{ exp_yaml }}"
 get-resources.args = [
   { "arg" = "exp_yaml", "default" = "configs/exp_vslamlab.yaml" }
@@ -199,6 +201,8 @@ evo = "==1.34.3"
 git-lfs = "*"
 piexif = "*"
 psutil = "*"
+streamlit = "*"
+plotly = "*"
 
 loguru = "*"
 utm = "*"
