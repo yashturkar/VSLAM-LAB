@@ -6,3 +6,9 @@ DATASET:
   sensor_type: stereo
   groundtruth_format: kitti
   output_dir: output/orbslam2_stereo
+
+EVALUATION:
+  max_time_difference_s: 0.02
+  fast_lio:
+    enabled: true
+    workspace: /home/yashturkar/humble_ws

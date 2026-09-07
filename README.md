@@ -128,6 +128,9 @@ pixi run compare-exp <exp_yaml>                          # Example: pixi run com
 pixi run eval-metrics <exp_yaml>                         # Run, evaluate, and write metrics.json
 pixi run eval-metrics-single <config_yaml>               # Headless custom-sequence evaluation
 pixi run demo-single <config_yaml>                       # GUI custom-sequence demo
+pixi run fastlio-reference <config_yaml>                 # Generate/reuse a FAST-LIO reference
+pixi run demo-fastlio <config_yaml>                      # FAST-LIO playback with RViz
+pixi run lightning-fastlio <processed_sequence_root>     # Stage, extract, run, and evaluate
 ```
 
 ### Research evaluation workflows
@@ -172,6 +175,157 @@ pixi exec --spec uv uv run Utilities/extract_lightning_mcap.py \
 Use the extractor's topic arguments when a recording uses different names. It rectifies
 both image streams from `camera_info`, writes synchronized stereo metadata, and exports
 `/odometry` as ground truth.
+
+#### FAST-LIO reference evaluation
+
+On Ubuntu 22.04, install native ROS 2 Humble and the pinned SPARK FAST-LIO workspace:
+
+```bash
+Utilities/setup_fastlio_humble.sh
+```
+
+The setup installs ROS 2 Desktop, MCAP support and build tools, then builds
+`MIT-SPARK/spark-fast-lio` in `~/humble_ws`. It does not edit shell startup files;
+the VSLAM-LAB runner sources the ROS environments explicitly.
+
+Enable the reference in a single-sequence config whose extracted sequence contains
+`extraction_metadata.json`:
+
+```yaml
+EVALUATION:
+  max_time_difference_s: 0.02
+  fast_lio:
+    enabled: true
+    workspace: /home/yashturkar/humble_ws
+```
+
+Generate or inspect the LiDAR trajectory independently:
+
+```bash
+pixi run -e vslamlab fastlio-reference configs/single_slam_test_2_seq001_orbslam2_stereo.yaml
+pixi run -e vslamlab fastlio-reference configs/single_slam_test_2_seq001_orbslam2_stereo.yaml --force
+pixi run -e vslamlab demo-fastlio configs/single_slam_test_2_seq001_orbslam2_stereo.yaml
+```
+
+`eval-metrics-single` automatically generates or reuses the same sequence-level cache.
+Its schema-v2 `metrics.json` reports VSLAM vs robot odometry, FAST-LIO vs robot
+odometry, and VSLAM vs FAST-LIO through EVO. Metric stereo and LiDAR trajectories use
+rigid SE(3) alignment without scale correction; monocular VSLAM uses Sim(3). The bags
+do not contain measured camera/body and Ouster/body mount transforms, so cross-sensor
+translation and especially rotation results are explicitly marked as approximate until
+those transforms are supplied. Robot-reference associations use the configured 20 ms
+window. For direct VSLAM-to-FAST-LIO evaluation, the approximately 1 Hz corrected
+FAST-LIO `/path` is linearly interpolated in position and quaternion-Slerped at VSLAM
+timestamps before EVO alignment and metric calculation.
+
+#### One-command resumable pipeline
+
+A processed CLID sequence root can be staged and evaluated end to end with one
+foreground command:
+
+```bash
+pixi run -e vslamlab lightning-fastlio \
+  /mnt/share/nas/eph/clid-v2-sequences/session/sequence
+```
+
+The command validates the recording and required topics, checks disk space and
+runtimes, stages `research-bag` under `/mnt/share/local/eph/VSLAM`, extracts the
+stereo dataset, runs ORB-SLAM2 and FAST-LIO, and writes pairwise metrics. Source paths
+are opened read-only, and outputs beneath `/mnt/share/nas` or inside the source tree
+are refused.
+
+Every stage records fingerprints and integrity checks in `pipeline.json`. Repeating
+the command prints `SKIP (verified)` for valid work and resumes the first missing,
+partial, or stale stage. Progress and failures are appended to `pipeline.log`.
+
+```bash
+pixi run -e vslamlab lightning-fastlio-check <processed_sequence_root>
+pixi run -e vslamlab lightning-fastlio-status <processed_sequence_root>
+```
+
+Advanced recovery and path overrides use the underlying CLI:
+
+```bash
+pixi run -e vslamlab python Utilities/lightning_fastlio_pipeline.py run \
+  <processed_sequence_root> --force-from fastlio
+
+pixi run -e vslamlab python Utilities/lightning_fastlio_pipeline.py run \
+  <processed_sequence_root> --local-root /mnt/share/local/eph/VSLAM
+```
+
+`--force-from` accepts `stage`, `extract`, `config`, `orbslam2`, `fastlio`, or
+`metrics` and reruns that stage and every downstream stage. Version one requires one
+indexed MCAP inside `research-bag`; split processed research bags fail preflight.
+
+#### Streamlit SLAM viewer
+
+Browse every processed capture below `/mnt/share/nas/eph/clid-v2-sequences`, launch
+timestamped headless runs, and inspect aligned trajectories and EVO APE/RPE metrics:
+
+```bash
+pixi run -e vslamlab slam-viewer
+```
+
+Open `http://localhost:8501`. The server binds to all interfaces, so it can also be
+opened through the host's Tailscale address. The NAS is treated as read-only. MCAPs
+and extracted stereo data are cached below `/mnt/share/local/eph/VSLAM/runs`; each
+button-triggered result is saved separately below
+`/mnt/share/local/eph/VSLAM/web_results/<sequence>/<timestamp>_<baseline>`.
+
+The viewer offers installed stereo-capable baselines from the VSLAM-LAB registry.
+FAST-LIO is optional per run. Metrics and the downloadable trajectory report are
+generated by the existing EVO evaluation pipeline.
+
+### BorealHDR stereo runs and exposure schedules
+
+BorealHDR uses the local recordings at `/mnt/share/local/eph/BorealHDR` and
+calibration from `/home/yashturkar/Workspace/TFR24_BorealHDR/BorealHDR`.
+Stereo is the default. Select a sequence and SLAM method from the repo root:
+
+```bash
+# List recordings
+pixi run -e vslamlab borealhdr list
+
+# Headless stereo with the default recorded 4 ms exposure
+pixi run -e vslamlab borealhdr run backpack_2023-04-20-09-29-14 --slam orbslam2 --mode stereo
+
+# Prepare images using the supplied varying-exposure schedule
+pixi run -e vslamlab borealhdr prepare backpack_2023-04-20-09-29-14 \
+  --exposure-yaml configs/borealhdr_exposure_demo.yaml
+
+# Headless stereo with that schedule (preparation is automatic/reused)
+pixi run -e vslamlab borealhdr run backpack_2023-04-20-09-29-14 \
+  --slam orbslam2 --mode stereo --exposure-yaml configs/borealhdr_exposure_demo.yaml
+
+# Stereo GUI demo with that schedule; requires an X display
+pixi run -e vslamlab borealhdr demo backpack_2023-04-20-09-29-14 \
+  --slam orbslam2 --mode stereo --exposure-yaml configs/borealhdr_exposure_demo.yaml
+```
+
+Replace `orbslam2` with another registered stereo-capable method, such as
+`orbslam3`. To use your own schedule, replace the `--exposure-yaml` path.
+
+An exposure YAML is a plain **zero-based frame number: exposure in milliseconds**
+mapping. Each entry applies to **both left and right cameras**, starting at that
+frame and holding until the next entry:
+
+```yaml
+0: 4.0     # Frames 0–59: 4 ms
+60: 8.0    # Frames 60–119: 8 ms
+120: 16.0  # Frame 120 onward: 16 ms
+```
+
+See the [exposure YAML specification](docs/BorealHDR.md#exposure-yaml-specification)
+for validation rules, frame indexing, and emulation behavior, and the
+[demo YAML](configs/borealhdr_exposure_demo.yaml) for a complete example.
+Preparation prints exposure changes; cached inputs print their schedule before
+SLAM starts. These are preparation/input reports, not live SLAM playback updates.
+
+Outputs live under `/mnt/share/local/eph/VSLAM/borealhdr`: prepared inputs are
+cached, and each run gets timestamped results with its trajectory, PDF, and logs.
+Scheduled runs also save their resolved exposure YAML and per-frame exposure CSV.
+The local sample has no supplied pose ground truth, so reference RMSE is not
+computed. See [BorealHDR details](docs/BorealHDR.md) for path overrides and limitations.
 
 ### Shared runtime storage
 

@@ -1,0 +1,12 @@
+# Zero-based exposure-cycle frame number: exposure in milliseconds.
+# Each setting applies to BOTH cameras until the next listed frame.
+# Sample backpack_2023-04-20-09-29-14 has 528 cycles.
+0: 4.0
+60: 8.0
+120: 16.0
+180: 32.0
+240: 16.0
+300: 8.0
+360: 4.0
+420: 2.0
+480: 1.0
