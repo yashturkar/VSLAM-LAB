@@ -10,11 +10,46 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from Utilities.borealhdr import discover, prepare, main
+from Utilities.borealhdr import discover, prepare, main, load_exposures, exposure_rows, convert_exposure
 from Datasets.get_dataset import get_dataset
 
 
 class BorealHDRTests(unittest.TestCase):
+    def test_schedule_validation_and_hold(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'exposure.yaml'
+            path.write_text('0: 4\n2: 8\n')
+            self.assertEqual(load_exposures(path, 4), [4., 4., 8., 8.])
+            for invalid in ('1: 4', '0: -1', '0: .nan', '0: true', '0: 4\n4: 8',
+                            '0: 4\n0: 8', '0: 4\n-1: 8', '"0": 4', '[]'):
+                path.write_text(invalid)
+                with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                    load_exposures(path, 4)
+
+    def test_stereo_uses_same_bracket_and_retains_real_timestamp(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            for bracket, offset in ((4., 10), (8., 20)):
+                for side in ('left', 'right'):
+                    folder = source / f'camera_{side}' / str(bracket)
+                    folder.mkdir(parents=True)
+                    for i in range(3):
+                        (folder / f'{1000 + i * 100 + offset}.png').touch()
+            rows = exposure_rows(source, [4., 8., 4.])
+            self.assertEqual([row[3] for row in rows], [1010, 1120, 1210])
+            for row in rows:
+                self.assertEqual(row[4].name, row[5].name)
+                self.assertEqual(row[4].parent.name, row[5].parent.name)
+            (source / 'camera_right/8.0/1120.png').unlink()
+            with self.assertRaises(ValueError):
+                exposure_rows(source, [4., 8., 4.])
+
+    def test_intermediate_exposure_uses_response_curve_and_clips(self):
+        gray = np.array([[1000, 3000]], dtype=np.uint16)
+        curve = np.linspace(0, 4095, 256)
+        np.testing.assert_array_equal(convert_exposure(gray, 6., 4., curve), [[1500, 4095]])
+        np.testing.assert_array_equal(convert_exposure(gray, 4., 4., None), gray)
+
     def test_cli_routes_headless_and_demo_and_records_results(self):
         for action, headless in [('run', True), ('demo', False)]:
             with self.subTest(action=action), tempfile.TemporaryDirectory() as directory:
@@ -72,6 +107,27 @@ class BorealHDRTests(unittest.TestCase):
             self.assertEqual(dataset.prepare_local_sequence(sequence.parent, name), sequence)
             with patch('Utilities.borealhdr.cv2.imread', side_effect=AssertionError('cached')):
                 self.assertEqual(prepare(root / 'data', name, root / 'code', root / 'out'), sequence)
+            for side in ('left', 'right'):
+                folder = root / 'data' / name / f'camera_{side}/8.0'
+                folder.mkdir()
+                for stamp in stamps:
+                    cv2.imwrite(str(folder / f'{stamp + 50000000}.png'), np.full((12, 16), 2048, dtype=np.uint16))
+            schedule = root / 'schedule.yaml'
+            schedule.write_text('0: 4\n2: 8\n')
+            variant = prepare(root / 'data', name, root / 'code', root / 'out', schedule)
+            self.assertNotEqual(variant, sequence)
+            log = pd.read_csv(variant / 'exposure.csv')
+            self.assertEqual(log['exposure_ms'].tolist(), [4, 4, 8, 8])
+            self.assertEqual(log['timestamp_ns'].tolist(), stamps[:2] + [s + 50000000 for s in stamps[2:]])
+            for side in (0, 1):
+                rendered = cv2.imread(str(variant / f'rgb_{side}' / f'{stamps[2] + 50000000}.png'), -1)
+                self.assertEqual(int(rendered[6, 8]), 128)
+            with patch('Utilities.borealhdr.cv2.imread', side_effect=AssertionError('cached')):
+                self.assertEqual(prepare(root / 'data', name, root / 'code', root / 'out', schedule), variant)
+            schedule.write_text('0: 8\n')
+            changed = prepare(root / 'data', name, root / 'code', root / 'out', schedule)
+            self.assertNotEqual(changed, variant)
+            self.assertTrue((variant / 'exposure.csv').is_file())
 
 
 if __name__ == '__main__':
