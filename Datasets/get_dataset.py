@@ -15,6 +15,7 @@ from Datasets.dataset_files.dataset_scannetplusplus import ScannetplusplusDatase
 from Datasets.dataset_files.dataset_caves import CavesDataset
 from Datasets.dataset_files.dataset_eiffel_tower import EiffelTowerDataset
 from Datasets.dataset_files.dataset_lightning import LightningDataset
+from Datasets.dataset_files.dataset_borealhdr import BorealHDRDataset
 
 # RGBD datasets
 from Datasets.dataset_files.dataset_eth import EthDataset
@@ -86,6 +87,7 @@ def get_dataset(dataset_name):
         "vitum": lambda: VitumDataset(),
         "eiffel-tower": lambda: EiffelTowerDataset(),
         "lightning": lambda: LightningDataset(),
+        "borealhdr": lambda: BorealHDRDataset(),
 
         # Development
         "videos": lambda: VideosDataset(),

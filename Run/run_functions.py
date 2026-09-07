@@ -95,7 +95,7 @@ def get_sequence_data_for_evaluation(exp: Any, dataset: Any, sequence_name: str)
     exp_folder = Path(exp.folder) / Path(dataset.dataset_folder) / sequence_name
     groundtruth_csv = sequence_path / 'groundtruth.csv'
     groundtruth_csv_dst = exp_folder / 'groundtruth.csv' 
-    if not groundtruth_csv_dst.exists():
+    if groundtruth_csv.is_file() and not groundtruth_csv_dst.exists():
         shutil.copy(groundtruth_csv, groundtruth_csv_dst)
 
     rgb_folder = sequence_path / "rgb_0"

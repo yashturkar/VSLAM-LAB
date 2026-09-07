@@ -1,0 +1,6 @@
+dataset_name: borealhdr
+rgb_hz: 3.6
+modes: [mono, stereo]
+cam_models: [radtan5]
+sequence_names: []
+sequence_location: local
