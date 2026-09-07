@@ -37,6 +37,62 @@ entry; frame 0 is required. You may also supply an entry for every frame.
 120: 16.0
 ```
 
+### Exposure YAML specification
+
+Pass the file using `--exposure-yaml PATH` to `prepare`, `run`, or `demo`.
+Relative paths are resolved from the current working directory. Omitting the
+option selects the recorded 4 ms bracket for every frame.
+
+| Item | Requirement / meaning |
+| --- | --- |
+| Document | One top-level YAML mapping; no `exposures:` wrapper, list, or separate camera sections. |
+| Key | A unique, unquoted integer frame number, starting at zero. Strings (`"0"`), fractional keys, booleans, and duplicate keys are rejected. |
+| Frame bounds | For a sequence with `N` synchronized cycles, every key must satisfy `0 <= frame_num < N`. An entry for frame `0` is required. |
+| Value | A finite positive YAML number in **milliseconds**, e.g. `4`, `8.0`, or `6.5`. Strings, booleans, zero, negative values, NaN and infinity are rejected. |
+| Application | The specified exposure starts at the keyed frame, inclusive, and holds until the next keyed frame. The last setting holds to the end. There is no interpolation between entries. |
+| Ordering | Keys may appear in any order; frame numbers determine application order. Ascending order is recommended for readability. |
+| Stereo | One requested exposure applies to both cameras. Per-camera exposure settings are not supported. |
+
+Frame numbers refer to **exposure cycles**, not raw image filenames, nanosecond
+timestamps, SLAM keyframes, or individual images across all six brackets.
+For each needed bracket, left/right images are paired by identical timestamp
+filenames, unpaired images are excluded, and pairs are sorted by timestamp.
+Frame `i` selects pair `i` from the chosen bracket's table. Needed brackets must
+have the same number of synchronized pairs as the reference 4 ms table; selected
+timestamps must remain strictly increasing. Counts alone cannot detect matching
+gaps in every bracket, so schedules assume the recording's bracket cycles are
+aligned, as in the upstream emulator.
+
+For the 528-cycle April sample, valid keys are `0` through `527`. The demo's
+last change is at `480`, so that value applies to frames `480–527`. A shorter
+sequence needs a schedule with all change points inside its own frame range.
+
+Sparse schedules are convenient for intervals; a dense mapping is supported too:
+
+```yaml
+# First four frames, then hold the final setting through the remaining frames.
+0: 4.0
+1: 6.5
+2: 8.0
+3: 4.0
+```
+
+Recorded exposures are **1, 2, 4, 8, 16, and 32 ms**. Requests matching those values
+use the corresponding recorded images. Other positive values, including values
+outside that recorded range, are emulated from the nearest bracket in log
+exposure using the calibrated camera response curve. Saturation is clipped;
+emulation does not recover lost detail or reproduce changes in motion blur.
+Choosing a different recorded bracket also changes the actual acquisition time
+within the cycle. See the processing details below.
+
+The resolved schedule is saved as `exposure.yaml` (one entry per frame), and
+`exposure.csv` records `frame_num`, `exposure_ms`, `source_bracket_ms`,
+`timestamp_ns`, `left_source`, and `right_source`. These files are copied into
+each scheduled run's result directory. Editing a schedule selects a separate
+cache when its effective exposures change; older prepared variants remain intact.
+
+### Commands with a schedule
+
 The supplied demo varies exposure from 1 to 32 ms over the 528-cycle April sample:
 
 ```bash
@@ -59,6 +115,11 @@ Scheduled preparations use separate fingerprinted directories under
 files, response curve and requested exposures contribute to the fingerprint.
 Each run saves the expanded `exposure.yaml` plus an `exposure.csv` listing the
 requested exposure, source bracket, timestamp and source files for both cameras.
+
+The terminal prints the current left/right exposure on every preparation exposure
+change, every 50 pairs, and at completion. Frame numbers are zero-based. Cached
+preparations print the input schedule by frame range before SLAM starts; these
+are input summaries, not live SLAM playback progress.
 
 Use `--mode mono` for a monocular baseline; stereo is the default. `--root`,
 `--code`, and `--output` override the paths above. `prepare` converts a sequence

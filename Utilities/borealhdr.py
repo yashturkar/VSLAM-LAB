@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import json
 import os
@@ -101,6 +102,23 @@ def convert_exposure(gray, target, source, curve):
     return np.interp(np.clip(radiance * target / source, 0, 4095), curve, digital).astype(np.uint16)
 
 
+def print_exposure_schedule(sequence):
+    """Report cached input exposures, without implying live SLAM progress."""
+    with (sequence / 'exposure.csv').open(newline='') as stream:
+        rows = list(csv.DictReader(stream))
+    print('Prepared input exposure schedule (not live SLAM progress):', flush=True)
+    start = 0
+    for end in range(1, len(rows) + 1):
+        first = rows[start]
+        if end < len(rows) and all(rows[end][key] == first[key]
+                                  for key in ('exposure_ms', 'source_bracket_ms')):
+            continue
+        print(f"  Frames {first['frame_num']}–{rows[end - 1]['frame_num']}: "
+              f"left = right = {float(first['exposure_ms']):g} ms "
+              f"(source bracket {float(first['source_bracket_ms']):g} ms)", flush=True)
+        start = end
+
+
 def discover(root):
     return sorted(p.name for p in root.glob('backpack_*')
                   if (p / 'camera_left/4.0').is_dir() and (p / 'camera_right/4.0').is_dir())
@@ -145,6 +163,7 @@ def prepare(root, name, code, output, exposure_yaml=None):
             for folder in ('rgb_0', 'rgb_1') for stamp in stamps
         ) and all((sequence / file).is_file() for file in ('rgb.csv', 'calibration.yaml', 'exposure.csv')):
             print(f'Preparation: SKIP (verified) {sequence}', flush=True)
+            print_exposure_schedule(sequence)
             return sequence
     first = cv2.imread(str(left[stamps[0]]), cv2.IMREAD_UNCHANGED)
     if first is None:
@@ -178,8 +197,10 @@ def prepare(root, name, code, output, exposure_yaml=None):
             rectified = cv2.remap(gray, *maps[index], interpolation=cv2.INTER_LINEAR)
             if not cv2.imwrite(str(sequence / f'rgb_{index}' / f'{stamp}.png'), rectified):
                 raise OSError(f'Cannot save rectified frame {stamp}')
-        if i % 50 == 0:
-            print(f'Prepare: {i + 1}/{len(stamps)} pairs', flush=True)
+        if i % 50 == 0 or i == len(stamps) - 1 or rows[i][1:3] != rows[i - 1][1:3]:
+            print(f'Prepare: {i + 1}/{len(stamps)} pairs | frame {i} | '
+                  f'left = right = {rows[i][1]:g} ms '
+                  f'(source bracket {rows[i][2]:g} ms)', flush=True)
     fps = float(1e9 / np.median(np.diff(np.array(stamps, dtype=np.int64))))
     write_csv(sequence / 'rgb.csv', ['ts_rgb_0 (ns)', 'path_rgb_0', 'ts_rgb_1 (ns)', 'path_rgb_1'],
               [[stamp, f'rgb_0/{stamp}.png', stamp, f'rgb_1/{stamp}.png'] for stamp in stamps])
