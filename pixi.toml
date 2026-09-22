@@ -69,6 +69,7 @@ platforms = ["linux-64", "osx-arm64", "win-64"]
 
 [feature.vslamlab.tasks]
 borealhdr = "python Utilities/borealhdr.py"
+clid-relight = "python Utilities/clid_relight.py"
 vslamlab.cmd = "python vslamlab_gui.py vslamlab {{ exp_yaml }} {{ overwrite }}"
 vslamlab.args = [
   { "arg" = "exp_yaml", "default" = "configs/exp_vslamlab.yaml" },
@@ -125,6 +126,21 @@ lightning-fastlio-check.args = [
 lightning-fastlio-status.cmd = "python Utilities/lightning_fastlio_pipeline.py status {{ bag_root }}"
 lightning-fastlio-status.args = [
   { "arg" = "bag_root" }
+]
+
+lightning-batch.cmd = "python Utilities/lightning_batch_pipeline.py run {{ config_yaml }}"
+lightning-batch.args = [
+  { "arg" = "config_yaml", "default" = "configs/oracle_set_1_batch.yaml" }
+]
+
+lightning-batch-check.cmd = "python Utilities/lightning_batch_pipeline.py check {{ config_yaml }}"
+lightning-batch-check.args = [
+  { "arg" = "config_yaml", "default" = "configs/oracle_set_1_batch.yaml" }
+]
+
+lightning-batch-status.cmd = "python Utilities/lightning_batch_pipeline.py status {{ config_yaml }}"
+lightning-batch-status.args = [
+  { "arg" = "config_yaml", "default" = "configs/oracle_set_1_batch.yaml" }
 ]
 
 slam-viewer = "streamlit run streamlit_app.py --server.address 0.0.0.0"

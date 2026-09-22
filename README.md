@@ -131,6 +131,7 @@ pixi run demo-single <config_yaml>                       # GUI custom-sequence d
 pixi run fastlio-reference <config_yaml>                 # Generate/reuse a FAST-LIO reference
 pixi run demo-fastlio <config_yaml>                      # FAST-LIO playback with RViz
 pixi run lightning-fastlio <processed_sequence_root>     # Stage, extract, run, and evaluate
+pixi run lightning-batch <batch_yaml>                    # Evaluate configured sequences and methods
 ```
 
 ### Research evaluation workflows
@@ -257,6 +258,51 @@ pixi run -e vslamlab python Utilities/lightning_fastlio_pipeline.py run \
 `metrics` and reruns that stage and every downstream stage. Version one requires one
 indexed MCAP inside `research-bag`; split processed research bags fail preflight.
 
+#### Multi-sequence batch evaluation
+
+Use the batch runner to stage and evaluate an explicit, reproducible list of CLID
+sequence roots with one or more stereo-capable VSLAM-LAB baselines:
+
+```bash
+pixi run -e vslamlab lightning-batch-check configs/oracle_set_1_batch.yaml
+pixi run -e vslamlab lightning-batch configs/oracle_set_1_batch.yaml
+pixi run -e vslamlab lightning-batch-status configs/oracle_set_1_batch.yaml
+```
+
+The supplied Oracle Set 1 config lists all six current sequences, selects
+`orbslam2`, and leaves FAST-LIO disabled for the initial visual-SLAM check. Add
+registered stereo baselines to `methods`, or set `fast_lio.enabled: true`, without
+changing the script. FAST-LIO is generated once per sequence and reused by every
+configured method.
+
+Batch YAML files require `version`, `name`, `local_root`, an explicit `sequences`
+list, and a non-empty `methods` list. `evaluation.thresholds` may optionally set a
+minimum temporal completion ratio or maximum translation APE RMSE against robot
+odometry and FAST-LIO. Null thresholds report measurements without declaring a run
+unhealthy. `execution.continue_on_error` controls whether the remaining matrix is
+attempted after an individual failure.
+
+NAS sources are read-only. Staged bags, extracted images, run state, and method
+outputs remain under `local_root`; output roots on NAS or inside a source tree are
+rejected. Repeated runs verify fingerprints and reuse valid stages. For targeted
+recovery, use the underlying script:
+
+```bash
+pixi run -e vslamlab python Utilities/lightning_batch_pipeline.py run \
+  configs/oracle_set_1_batch.yaml --sequence 1132lab_seq001 --method orbslam2
+
+pixi run -e vslamlab python Utilities/lightning_batch_pipeline.py run \
+  configs/oracle_set_1_batch.yaml --force-from metrics
+```
+
+Aggregate `report.md`, `report.csv`, and `report.json` files are written below
+`<local_root>/batches/<name>`. Reports include EVO APE/RPE statistics, association
+coverage, path-length coverage, temporal completion, timing gaps, threshold results,
+errors, and paths to each trajectory, metrics JSON, plot, config, and log. Temporal
+completion is the overlap of the VSLAM and robot-odometry timestamp spans divided by
+the full odometry duration; it avoids treating ORB-SLAM's sparse keyframe count as a
+camera-frame tracking rate.
+
 #### Streamlit SLAM viewer
 
 Browse every processed capture below `/mnt/share/nas/eph/clid-v2-sequences`, launch
@@ -326,6 +372,25 @@ cached, and each run gets timestamped results with its trajectory, PDF, and logs
 Scheduled runs also save their resolved exposure YAML and per-frame exposure CSV.
 The local sample has no supplied pose ground truth, so reference RMSE is not
 computed. See [BorealHDR details](docs/BorealHDR.md) for path overrides and limitations.
+
+### CLID component relighting
+
+Synthesize a local, rectified mono sequence from CLID V6.3 components with a
+per-frame onboard-light and exposure-EV schedule, then run and evaluate ORB-SLAM2:
+
+```bash
+SEQUENCE=/mnt/share/local/eph/VSLAM/runs/kitchen2corr_20260915_203647_seq001/vslamlab/kitchen2corr_seq001
+pixi run -e vslamlab clid-relight run "$SEQUENCE" \
+  --schedule-yaml configs/clid_relight_demo.yaml \
+  --profile viewer-rgb --slam orbslam2
+```
+
+Use `prepare` to render without SLAM or `demo` for a GUI run. Inputs remain
+read-only and variants/results default to `/mnt/share/local/eph/VSLAM/relighting`.
+Camera 0 is currently supported; stereo is intentionally blocked until synchronized
+camera-1 components exist. See the [CLID relighting guide](docs/CLIDRelighting.md)
+for the YAML specification, profiles, calibration compensation, caching, outputs,
+and complete commands.
 
 ### Shared runtime storage
 
