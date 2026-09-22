@@ -1,0 +1,15 @@
+schema_version: 1
+equation: clid-v63-bounded-cubic-v1
+accepted_producer_config_sha256:
+  - 6a385e05f009944b5e02198de63d6b3d30148f781c33be06c30ea97917e208a2
+power_response:
+  commanded: [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+  effective: [0.0, 0.2603793, 0.3598035, 0.4643145, 0.5544377, 0.6447163, 0.7299007, 0.8029330, 0.8746503, 0.9353035, 1.0]
+viewer_profile:
+  white_balance_rgb: [1.609, 1.0, 1.152]
+  display_exposure: 2.0
+profiles:
+  viewer-rgb:
+    version: viewer-rgb-v1
+  linear-gray:
+    version: linear-gray-v1
