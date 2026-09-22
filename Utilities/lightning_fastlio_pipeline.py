@@ -242,7 +242,11 @@ class Pipeline:
         details = event.get("message", "")
         self.log(f"{stage}:{suffix}{' - ' + details if details else ''}")
 
-    def source_checks(self) -> dict[str, Any]:
+    def source_checks(
+        self,
+        require_orbslam2: bool = True,
+        require_fastlio: bool = True,
+    ) -> dict[str, Any]:
         errors: list[str] = []
         warnings: list[str] = []
         if not self.paths.bag_root.is_dir():
@@ -302,13 +306,15 @@ class Pipeline:
         if not os.access(ancestor, os.W_OK):
             errors.append(f"Local output ancestor is not writable: {ancestor}")
 
-        tools = {
-            "rsync": shutil.which("rsync"),
-            "orbslam2": VSLAM_LAB_DIR / ".pixi/envs/orbslam2/bin/vslamlab_orbslam2_stereo",
-            "ros_humble": Path("/opt/ros/humble/setup.zsh"),
-            "fast_lio_setup": self.workspace / "install/setup.zsh",
-            "fast_lio_library": self.workspace / "install/spark_fast_lio/lib/libspark_lio_component.so",
-        }
+        tools: dict[str, str | Path | None] = {"rsync": shutil.which("rsync")}
+        if require_orbslam2:
+            tools["orbslam2"] = VSLAM_LAB_DIR / ".pixi/envs/orbslam2/bin/vslamlab_orbslam2_stereo"
+        if require_fastlio:
+            tools.update({
+                "ros_humble": Path("/opt/ros/humble/setup.zsh"),
+                "fast_lio_setup": self.workspace / "install/setup.zsh",
+                "fast_lio_library": self.workspace / "install/spark_fast_lio/lib/libspark_lio_component.so",
+            })
         for name, path in tools.items():
             if not path or not Path(path).is_file():
                 errors.append(f"Missing runtime prerequisite {name}: {path}")

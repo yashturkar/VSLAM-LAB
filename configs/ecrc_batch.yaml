@@ -1,0 +1,28 @@
+version: 1
+name: ecrc
+
+local_root: /mnt/share/local/eph/VSLAM
+sensor_type: stereo
+
+sequences:
+  - /mnt/share/nas/eph/clid-v2-sequences/ecrc/radio-smoke-2_20260815_151400/radio-smoke-2_seq001_20260815_151622_239299
+  - /mnt/share/nas/eph/clid-v2-sequences/ecrc/radio-smoke-2_20260815_151400/radio-smoke-2_seq002_20260815_152013_337594
+  - /mnt/share/nas/eph/clid-v2-sequences/ecrc/radio-smoke-2_20260815_151400/radio-smoke-2_seq003_20260815_152510_940447
+  - /mnt/share/nas/eph/clid-v2-sequences/ecrc/radio-smoke-2_20260815_151400/radio-smoke-2_seq004_20260815_152933_233310
+
+methods:
+  - orbslam2
+
+fast_lio:
+  enabled: false
+  workspace: /home/yashturkar/humble_ws
+
+evaluation:
+  max_time_difference_s: 0.02
+  thresholds:
+    min_temporal_completion_ratio: null
+    max_vslam_vs_robot_odometry_translation_rmse_m: null
+    max_vslam_vs_fast_lio_translation_rmse_m: null
+
+execution:
+  continue_on_error: true

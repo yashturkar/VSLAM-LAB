@@ -1,0 +1,30 @@
+version: 1
+name: oracle-set-1
+
+local_root: /mnt/share/local/eph/VSLAM
+sensor_type: stereo
+
+sequences:
+  - /mnt/share/nas/eph/clid-v2-sequences/oracle-set-1/kitchen2corr_20260915_203647/kitchen2corr_seq001_20260915_203705_161135
+  - /mnt/share/nas/eph/clid-v2-sequences/oracle-set-1/113kitchenloop_20260915_213734/113kitchenloop_seq001_20260915_213758_369739
+  - /mnt/share/nas/eph/clid-v2-sequences/oracle-set-1/113kitchenloop_20260915_213734/113kitchenloop_seq002_20260915_214030_477583
+  - /mnt/share/nas/eph/clid-v2-sequences/oracle-set-1/1132lab_20260915_214425/1132lab_seq001_20260915_214443_380371
+  - /mnt/share/nas/eph/clid-v2-sequences/oracle-set-1/1132lab_20260915_214425/1132lab_seq002_20260915_214611_454512
+  - /mnt/share/nas/eph/clid-v2-sequences/oracle-set-1/lab2113_20260915_202312/lab2113_seq001_20260915_202447_690335
+
+methods:
+  - orbslam2
+
+fast_lio:
+  enabled: false
+  workspace: /home/yashturkar/humble_ws
+
+evaluation:
+  max_time_difference_s: 0.02
+  thresholds:
+    min_temporal_completion_ratio: null
+    max_vslam_vs_robot_odometry_translation_rmse_m: null
+    max_vslam_vs_fast_lio_translation_rmse_m: null
+
+execution:
+  continue_on_error: true
