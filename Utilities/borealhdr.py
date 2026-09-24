@@ -225,11 +225,15 @@ def main():
     parser.add_argument('--root', type=Path, default=DEFAULT_DATA)
     parser.add_argument('--code', type=Path, default=DEFAULT_CODE)
     parser.add_argument('--output', type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument('--reference-root', type=Path,
+                        default=Path('/mnt/share/nas/eph/BorealHDR-references/fastlio-v1'),
+                        help='Read-only shared FAST-LIO reference bundles')
     parser.add_argument('--exposure-yaml', type=Path, help='Zero-based frame: exposure_ms mapping; hold until next entry')
     args = parser.parse_args()
     args.root = args.root.expanduser().resolve()
     args.code = args.code.expanduser().resolve()
     args.output = args.output.expanduser().resolve()
+    args.reference_root = args.reference_root.expanduser().resolve()
     if args.action == 'list':
         print('\n'.join(discover(args.root)))
         return
@@ -248,7 +252,7 @@ def main():
     season = 'april_2023' if args.sequence.startswith('backpack_2023-04-') else 'september_2023'
     left_calibration = args.code / 'calibration_files/calibration_vo' / season / 'left.yaml'
     reference_trajectory = ensure_full_reference(args.root / args.sequence,
-                                                 args.output / 'fastlio_reference')
+                                                 args.output / 'fastlio_reference', args.reference_root)
     reference = materialize_camera_reference(reference_trajectory, sequence, left_calibration)
     run = args.output / 'results' / args.sequence / (datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S_%f') + '_' + args.slam)
     run.mkdir(parents=True)

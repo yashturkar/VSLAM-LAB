@@ -7,7 +7,7 @@ Run these commands from the VSLAM-LAB checkout. `borealhdr run` is headless;
 prepare the stereo images, generate or reuse the FAST-LIO reference, run SLAM,
 and evaluate the result. A separate `boreal-fastlio` invocation is unnecessary.
 
-On a machine without a reusable reference, install native ROS 2 Humble and the
+On a machine without a reusable *shared or local* reference, install native ROS 2 Humble and the
 pinned SPARK FAST-LIO build on Ubuntu 22.04 using
 [`Utilities/setup_fastlio_humble.sh`](../Utilities/setup_fastlio_humble.sh).
 This is a system/workspace dependency, not part of the Pixi environment. The
@@ -20,29 +20,60 @@ For the April backpack sequence, the current defaults expect:
 
 - Raw sequence: `/mnt/share/local/eph/BorealHDR/backpack_2023-04-20-09-29-14`
 - Boreal calibration checkout: `/home/yashturkar/Workspace/TFR24_BorealHDR/BorealHDR`
-- Output and reference cache: `/mnt/share/local/eph/VSLAM/borealhdr`
+- Prepared images and result output: `/mnt/share/local/eph/VSLAM/borealhdr`
+- Shared reference sidecars: `/mnt/share/nas/eph/BorealHDR-references/fastlio-v1`
 
-`--root`, `--code`, and `--output` override those three base directories,
-respectively. With those exact defaults and a verified existing full reference,
-the following command prints `Boreal FAST-LIO: reusing ...` and does not launch
-FAST-LIO again:
+`--root`, `--code`, and `--output` override the first three base directories,
+respectively; `--reference-root` overrides the read-only shared lookup directory.
+With a verified shared bundle, the following command prints
+`Boreal FAST-LIO: reusing shared ...` and does not launch FAST-LIO again:
 
 ```bash
 pixi run -e vslamlab borealhdr demo backpack_2023-04-20-09-29-14 \
   --slam orbslam3 --mode stereo
 ```
 
-The existing full reference is under
-`/mnt/share/local/eph/VSLAM/borealhdr/fastlio_reference/backpack_2023-04-20-09-29-14/20260923_202055_full/`.
-Keep the **whole directory**, including `manifest.json` and `trajectory.csv`:
-the CSV alone is not a reusable cache entry. Reuse requires a completed full
-run, the same resolved raw-sequence path recorded in its manifest, the same
-FAST-LIO configuration hash, and a valid trajectory covering the recording.
-The reference and prepared camera poses are on `/mnt/share/local`, **not** in
-the raw sequence or on `/mnt/share/nas`. Access to the NAS alone is insufficient.
-If validation fails, the command attempts to generate a new full reference and
-therefore needs the ROS 2/FAST-LIO installation above. Path sharing and cache
-portability across machines are not handled yet.
+The April reference is published under
+`/mnt/share/nas/eph/BorealHDR-references/fastlio-v1/backpack_2023-04-20-09-29-14/`.
+Keep the **whole sidecar directory**, including `manifest.json` and
+`trajectory.csv`. Reuse checks the path-independent sensor fingerprint (full IMU
+hash, all lidar scan names and sizes, and hashes of three scans), FAST-LIO config
+hash, trajectory hash, and quality checks. This supports the same raw sequence at
+a different absolute path; it does not prove every lidar CSV byte is identical.
+If a shared bundle is present but invalid, the command fails rather than silently
+replacing or regenerating it. If no shared bundle exists, it reuses a verified
+local run or generates one with ROS 2/FAST-LIO. Prepared camera poses and SLAM
+results remain local. The runner never writes to the shared reference directory.
+
+To check the published April bundle without generating anything:
+
+```bash
+pixi run -e vslamlab boreal-reference-batch \
+  --sequence backpack_2023-04-20-09-29-14 --check-only
+```
+
+The [local batch report](/mnt/share/local/eph/VSLAM/borealhdr/reference_batch/report.md)
+lists pose count, temporal coverage, and GNSS-aligned horizontal RMSE. The bundle
+also includes its config, logs, generation manifest, and GNSS comparison PNG/PDF.
+GNSS is a sanity check, not surveyed ground truth. The April pilot has 143 poses,
+98.6% sensor-span coverage, 0.56 m aligned 2D difference from GNSS, and 521/528
+selected camera timestamps covered by interpolation. Camera extrinsics are
+URDF-derived and should still be independently checked before treating camera
+orientation errors as definitive.
+
+To generate, validate, and publish all available sequences, run this yourself:
+
+```bash
+pixi run -e vslamlab boreal-reference-batch --all
+```
+
+The batch command resumes by skipping verified sidecars, reports progress per
+sequence, continues after a failure, and writes `report.json` and `report.md` to
+`/mnt/share/local/eph/VSLAM/borealhdr/reference_batch`. A failed validation is
+reported and **not published**. Use `--all --check-only` afterward to audit the
+published set without running FAST-LIO or writing to NAS. Generating missing
+references requires the native FAST-LIO installation above. The script publishes
+only small reference bundles, never raw recordings or prepared images.
 
 ## Experimental FAST-LIO lidar reference
 
@@ -50,8 +81,9 @@ The released BorealHDR sequence archives include VLP-16 lidar scans and Xsens IM
 measurements but no pose trajectory. `boreal-fastlio` replays those CSV files to
 the installed SPARK FAST-LIO build and records an independent lidar/IMU reference.
 It is **not** the authors' published libpointmatcher reference or surveyed ground
-truth. All generated files are stored under
-`/mnt/share/local/eph/VSLAM/borealhdr/fastlio_reference`; input CSVs are read only.
+truth. Generation outputs are stored under
+`/mnt/share/local/eph/VSLAM/borealhdr/fastlio_reference`; validated sidecars
+are separately published under the shared root above. Input CSVs are read only.
 
 ```bash
 # 30 sensor seconds at half-speed, suitable for checking timestamps and motion.

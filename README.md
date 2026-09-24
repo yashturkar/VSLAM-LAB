@@ -130,6 +130,7 @@ pixi run eval-metrics-single <config_yaml>               # Headless custom-seque
 pixi run demo-single <config_yaml>                       # GUI custom-sequence demo
 pixi run fastlio-reference <config_yaml>                 # Generate/reuse a FAST-LIO reference
 pixi run -e vslamlab boreal-fastlio <Boreal_sequence>     # Experimental VLP-16 lidar/IMU reference
+pixi run -e vslamlab boreal-reference-batch --all         # Validate/publish shared Boreal references
 pixi run demo-fastlio <config_yaml>                      # FAST-LIO playback with RViz
 pixi run lightning-fastlio <processed_sequence_root>     # Stage, extract, run, and evaluate
 pixi run lightning-batch <batch_yaml>                    # Evaluate configured sequences and methods
@@ -373,6 +374,9 @@ cached, and each run gets timestamped results with its trajectory, metrics JSON,
 trajectory PDF, and logs. `run` and `demo` generate or reuse a full FAST-LIO
 lidar/IMU reference, transform it to the selected left-camera timestamps, and
 evaluate after SLAM using the same metrics path as `eval-metrics-single`.
+Validated shared sidecars under `/mnt/share/nas/eph/BorealHDR-references/fastlio-v1`
+are preferred; the runner reads but never writes them. Use
+`pixi run -e vslamlab boreal-reference-batch --all --check-only` to audit them.
 Scheduled runs also save their resolved exposure YAML and per-frame exposure CSV.
 The resulting reference is locally estimated, not surveyed ground truth. Check
 temporal completion alongside RMSE. See [BorealHDR details](docs/BorealHDR.md)
