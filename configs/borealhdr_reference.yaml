@@ -1,0 +1,12 @@
+# BorealHDR backpack sensor geometry from backpack.urdf.xacro.
+# camera1 is the physical left camera (positive rack Y); its link uses
+# optical axes (Z forward, X right). The rectification rotation comes from
+# calibration_vo/<season>/left.yaml at preparation time.
+schema_version: 1
+method: spark_fast_lio_vlp16
+pose_frame: imu_link
+camera_frame: rectified_camera1_link
+imu_to_camera1:
+  xyz_m: [-0.043204, 0.087551, 0.024917]
+  rpy_rad: [-1.74533, 0.0, -1.5707963267948966]
+source_geometry: TFR24_BorealHDR/backpack_workspace/backpack_description/urdf/backpack.urdf.xacro

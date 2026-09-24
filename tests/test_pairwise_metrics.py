@@ -56,6 +56,24 @@ class PairwiseMetricsTests(unittest.TestCase):
             })
             self.assertEqual(report["warnings"], ["proxy"])
             self.assertAlmostEqual(report["rmse"]["translation"], 0.0, places=10)
+            self.assertAlmostEqual(report["temporal_completion_ratio"], 1.0)
+
+    def test_custom_reference_label_and_short_tracking_span(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            reference, estimate = root / "reference.csv", root / "estimate.csv"
+            write_trajectory(reference)
+            frame = pd.read_csv(reference)
+            frame.iloc[:5].to_csv(estimate, index=False)
+            output, _ = write_pairwise_metrics(
+                root / "metrics.json", estimate, reference, None, 0.02, "stereo",
+                primary_reference_name="boreal_fast_lio", reference_metadata={"method": "fast_lio"},
+            )
+            report = json.loads(output.read_text())
+            self.assertEqual(report["primary_reference"], "boreal_fast_lio")
+            self.assertIn("vslam_vs_boreal_fast_lio", report["comparisons"])
+            self.assertAlmostEqual(report["temporal_completion_ratio"], 4 / 19)
+            self.assertEqual(report["reference_metadata"], {"method": "fast_lio"})
 
     def test_cross_reference_comparison_interpolates_fast_lio(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -280,6 +280,15 @@ def evaluate_single_trajectory(
     config.output_dir.mkdir(parents=True, exist_ok=True)
     fast_lio_trajectory: Path | None = None
     warnings: list[str] = []
+    evaluation = load_yaml_file(config_yaml).get("EVALUATION", {})
+    reference_name = evaluation.get("reference_name", "robot_odometry")
+    reference_metadata = evaluation.get("reference_metadata", {})
+    if not isinstance(reference_metadata, dict):
+        raise ValueError("EVALUATION.reference_metadata must be a mapping")
+    configured_warnings = evaluation.get("warnings", [])
+    if not isinstance(configured_warnings, list) or not all(isinstance(item, str) for item in configured_warnings):
+        raise ValueError("EVALUATION.warnings must be a list of strings")
+    warnings.extend(configured_warnings)
     if fast_lio_reference_enabled(config_yaml):
         print_msg(f"{ws(4)}", "Generating or reusing FAST-LIO reference")
         fast_lio_trajectory = generate_fast_lio_reference(config_yaml, progress=fast_lio_progress)
@@ -299,6 +308,8 @@ def evaluate_single_trajectory(
         config.max_time_difference_s,
         config.sensor_type,
         warnings,
+        primary_reference_name=reference_name,
+        reference_metadata=reference_metadata,
     )
     write_combined_report(
         aligned,

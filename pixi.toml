@@ -69,6 +69,7 @@ platforms = ["linux-64", "osx-arm64", "win-64"]
 
 [feature.vslamlab.tasks]
 borealhdr = "python Utilities/borealhdr.py"
+boreal-fastlio = "python Utilities/boreal_fastlio.py"
 clid-relight = "python Utilities/clid_relight.py"
 vslamlab.cmd = "python vslamlab_gui.py vslamlab {{ exp_yaml }} {{ overwrite }}"
 vslamlab.args = [

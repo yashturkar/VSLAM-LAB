@@ -129,6 +129,7 @@ pixi run eval-metrics <exp_yaml>                         # Run, evaluate, and wr
 pixi run eval-metrics-single <config_yaml>               # Headless custom-sequence evaluation
 pixi run demo-single <config_yaml>                       # GUI custom-sequence demo
 pixi run fastlio-reference <config_yaml>                 # Generate/reuse a FAST-LIO reference
+pixi run -e vslamlab boreal-fastlio <Boreal_sequence>     # Experimental VLP-16 lidar/IMU reference
 pixi run demo-fastlio <config_yaml>                      # FAST-LIO playback with RViz
 pixi run lightning-fastlio <processed_sequence_root>     # Stage, extract, run, and evaluate
 pixi run lightning-batch <batch_yaml>                    # Evaluate configured sequences and methods
@@ -368,10 +369,14 @@ Preparation prints exposure changes; cached inputs print their schedule before
 SLAM starts. These are preparation/input reports, not live SLAM playback updates.
 
 Outputs live under `/mnt/share/local/eph/VSLAM/borealhdr`: prepared inputs are
-cached, and each run gets timestamped results with its trajectory, PDF, and logs.
+cached, and each run gets timestamped results with its trajectory, metrics JSON,
+trajectory PDF, and logs. `run` and `demo` generate or reuse a full FAST-LIO
+lidar/IMU reference, transform it to the selected left-camera timestamps, and
+evaluate after SLAM using the same metrics path as `eval-metrics-single`.
 Scheduled runs also save their resolved exposure YAML and per-frame exposure CSV.
-The local sample has no supplied pose ground truth, so reference RMSE is not
-computed. See [BorealHDR details](docs/BorealHDR.md) for path overrides and limitations.
+The resulting reference is locally estimated, not surveyed ground truth. Check
+temporal completion alongside RMSE. See [BorealHDR details](docs/BorealHDR.md)
+for FAST-LIO setup, cache reuse, path overrides, reference provenance, and limitations.
 
 ### CLID component relighting
 

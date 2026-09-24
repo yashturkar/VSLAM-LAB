@@ -121,6 +121,9 @@ def evaluate_pair(
     reference_length = float(reference.path_length)
     estimate_length = float(estimate.path_length)
     ratio = estimate_length / reference_length if reference_length > 0 else None
+    reference_duration = float(reference_full.timestamps[-1] - reference_full.timestamps[0])
+    overlap_duration = max(0.0, min(reference_full.timestamps[-1], estimate_full.timestamps[-1])
+                           - max(reference_full.timestamps[0], estimate_full.timestamps[0]))
     result = {
         "reference": reference_name,
         "estimate": estimate_name,
@@ -140,6 +143,7 @@ def evaluate_pair(
             "first_timestamp_s": float(reference.timestamps[0]),
             "last_timestamp_s": float(reference.timestamps[-1]),
         },
+        "temporal_completion_ratio": min(1.0, overlap_duration / reference_duration) if reference_duration > 0 else None,
         "ape": {
             "translation": {"unit": "m", **_statistics(translation_ape)},
             "rotation": {"unit": "deg", **_statistics(rotation_ape)},
@@ -169,6 +173,7 @@ def _legacy_summary(primary: dict[str, Any]) -> dict[str, Any]:
         "length_ratio": coverage,
         "gt_trajectory_length": primary["path_lengths_m"]["reference"],
         "weighted_rmse": weighted,
+        "temporal_completion_ratio": primary["temporal_completion_ratio"],
     }
 
 
@@ -180,23 +185,27 @@ def write_pairwise_metrics(
     max_time_difference_s: float,
     sensor_type: str,
     warnings: list[str] | None = None,
+    primary_reference_name: str = "robot_odometry",
+    reference_metadata: dict[str, Any] | None = None,
 ) -> tuple[Path, dict[str, PoseTrajectory3D]]:
+    if not primary_reference_name or not primary_reference_name.replace("_", "").isalnum():
+        raise ValueError("primary_reference_name must be a nonempty identifier")
     odometry = read_pose_trajectory(odometry_path)
     vslam = read_pose_trajectory(vslam_path)
     primary, vslam_aligned = evaluate_pair(
         odometry,
         vslam,
-        "robot_odometry",
+        primary_reference_name,
         "vslam",
         max_time_difference_s,
         correct_scale=sensor_type.lower() == "mono",
     )
-    comparisons: dict[str, Any] = {"vslam_vs_robot_odometry": primary}
-    aligned = {"robot_odometry": odometry, "vslam": vslam_aligned}
+    comparisons: dict[str, Any] = {f"vslam_vs_{primary_reference_name}": primary}
+    aligned = {primary_reference_name: odometry, "vslam": vslam_aligned}
     if fast_lio_path is not None:
         fast_lio = read_pose_trajectory(fast_lio_path)
         fast_vs_odom, fast_aligned = evaluate_pair(
-            odometry, fast_lio, "robot_odometry", "fast_lio", max_time_difference_s
+            odometry, fast_lio, primary_reference_name, "fast_lio", max_time_difference_s
         )
         interpolated_fast_lio = interpolate_trajectory(fast_lio, vslam.timestamps)
         vslam_vs_fast, _ = evaluate_pair(
@@ -205,17 +214,18 @@ def write_pairwise_metrics(
         )
         vslam_vs_fast["reference_interpolation"] = "linear position and quaternion Slerp at VSLAM timestamps"
         comparisons.update({
-            "fast_lio_vs_robot_odometry": fast_vs_odom,
+            f"fast_lio_vs_{primary_reference_name}": fast_vs_odom,
             "vslam_vs_fast_lio": vslam_vs_fast,
         })
         aligned["fast_lio"] = fast_aligned
 
     report = {
         "schema_version": 2,
-        "primary_reference": "robot_odometry",
+        "primary_reference": primary_reference_name,
         **_legacy_summary(primary),
         "comparisons": comparisons,
         "warnings": warnings or [],
+        "reference_metadata": reference_metadata or {},
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     output_path.parent.mkdir(parents=True, exist_ok=True)

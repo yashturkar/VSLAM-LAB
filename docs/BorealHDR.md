@@ -1,5 +1,108 @@
 # BorealHDR
 
+## Setup and reusing a reference
+
+Run these commands from the VSLAM-LAB checkout. `borealhdr run` is headless;
+`borealhdr demo` requires a desktop terminal with an X display. Both commands
+prepare the stereo images, generate or reuse the FAST-LIO reference, run SLAM,
+and evaluate the result. A separate `boreal-fastlio` invocation is unnecessary.
+
+On a machine without a reusable reference, install native ROS 2 Humble and the
+pinned SPARK FAST-LIO build on Ubuntu 22.04 using
+[`Utilities/setup_fastlio_humble.sh`](../Utilities/setup_fastlio_humble.sh).
+This is a system/workspace dependency, not part of the Pixi environment. The
+current Boreal runner expects that build at `/home/yashturkar/humble_ws` and
+checks `/opt/ros/humble/setup.zsh` before starting a new FAST-LIO run. The
+installer's `FAST_LIO_WORKSPACE` override does **not** change the runner's
+hard-coded path yet.
+
+For the April backpack sequence, the current defaults expect:
+
+- Raw sequence: `/mnt/share/local/eph/BorealHDR/backpack_2023-04-20-09-29-14`
+- Boreal calibration checkout: `/home/yashturkar/Workspace/TFR24_BorealHDR/BorealHDR`
+- Output and reference cache: `/mnt/share/local/eph/VSLAM/borealhdr`
+
+`--root`, `--code`, and `--output` override those three base directories,
+respectively. With those exact defaults and a verified existing full reference,
+the following command prints `Boreal FAST-LIO: reusing ...` and does not launch
+FAST-LIO again:
+
+```bash
+pixi run -e vslamlab borealhdr demo backpack_2023-04-20-09-29-14 \
+  --slam orbslam3 --mode stereo
+```
+
+The existing full reference is under
+`/mnt/share/local/eph/VSLAM/borealhdr/fastlio_reference/backpack_2023-04-20-09-29-14/20260923_202055_full/`.
+Keep the **whole directory**, including `manifest.json` and `trajectory.csv`:
+the CSV alone is not a reusable cache entry. Reuse requires a completed full
+run, the same resolved raw-sequence path recorded in its manifest, the same
+FAST-LIO configuration hash, and a valid trajectory covering the recording.
+The reference and prepared camera poses are on `/mnt/share/local`, **not** in
+the raw sequence or on `/mnt/share/nas`. Access to the NAS alone is insufficient.
+If validation fails, the command attempts to generate a new full reference and
+therefore needs the ROS 2/FAST-LIO installation above. Path sharing and cache
+portability across machines are not handled yet.
+
+## Experimental FAST-LIO lidar reference
+
+The released BorealHDR sequence archives include VLP-16 lidar scans and Xsens IMU
+measurements but no pose trajectory. `boreal-fastlio` replays those CSV files to
+the installed SPARK FAST-LIO build and records an independent lidar/IMU reference.
+It is **not** the authors' published libpointmatcher reference or surveyed ground
+truth. All generated files are stored under
+`/mnt/share/local/eph/VSLAM/borealhdr/fastlio_reference`; input CSVs are read only.
+
+```bash
+# 30 sensor seconds at half-speed, suitable for checking timestamps and motion.
+pixi run -e vslamlab boreal-fastlio \
+  /mnt/share/local/eph/BorealHDR/backpack_2023-04-20-09-29-14
+
+# Entire sequence at real-time playback speed.
+pixi run -e vslamlab boreal-fastlio \
+  /mnt/share/local/eph/BorealHDR/backpack_2023-04-20-09-29-14 \
+  --duration 0 --rate 1.0
+```
+
+Each run creates a timestamped directory containing `trajectory.csv` in VSLAM-LAB
+nanosecond pose format, the original TUM path, `manifest.json`, and separate player,
+mapper, and recorder logs. The `timestamp` column in `imu.csv` and lidar filenames
+is used as the common sensor clock. Lidar CSV `time` values are per-point offsets
+relative to a scan stamp near its end; the player moves the cloud stamp to the
+first point and converts offsets to seconds after scan start. The FAST-LIO config
+uses the VLP-16 mode, 16 rings, and the lidar-to-IMU transform from the upstream
+backpack URDF. The raw FAST-LIO trajectory describes the IMU frame.
+
+`borealhdr run` and `borealhdr demo` now find a verified full reference run or
+generate it automatically. They transform IMU poses into the rectified left-camera
+frame, interpolate at the exact selected image timestamps, and write the
+prepared variant's `groundtruth.csv` and `groundtruth_reference.json`. Only image
+timestamps within the FAST-LIO trajectory are included; the April sample covers
+521 of 528 selected frames. The camera mounting transform is recorded in
+[`configs/borealhdr_reference.yaml`](../configs/borealhdr_reference.yaml), and
+the rectification rotation is read from that season's `left.yaml` calibration.
+Generated camera references are fingerprinted and reused on repeat runs.
+
+After SLAM, both `run` and `demo` call the same evaluator as
+`eval-metrics-single`. Each result directory gets `metrics.json` (APE, RPE,
+associations and temporal completion), `trajectory_report.pdf`, and `run.json`.
+The reference is labelled `boreal_fast_lio` in metrics. Stereo evaluation uses
+SE(3) alignment without scale correction; mono uses Sim(3). A low RMSE on a
+short trajectory does not imply full-sequence tracking, so check
+`temporal_completion_ratio` and matched poses as well.
+
+For the previously tested exposure schedule:
+
+```bash
+pixi run -e vslamlab borealhdr demo backpack_2023-04-20-09-29-14 \
+  --slam orbslam2 --mode stereo \
+  --exposure-yaml configs/borealhdr_exposure_demo_maria_test1.yaml
+```
+
+`prepare` still prepares images alone. For a generated `config.yaml`, the usual
+`pixi run -e vslamlab eval-metrics-single <config.yaml>` also sees the prepared
+camera reference, but that task runs SLAM again before evaluating.
+
 The `borealhdr` task converts the recorded **4 ms** stereo bracket into a local
 VSLAM-LAB dataset and runs the selected baseline. It does not emulate exposure or
 run an exposure controller by default. A supplied exposure YAML overrides the
@@ -128,11 +231,11 @@ Each run gets a separate timestamped directory under `results/<sequence>/`, with
 `config.yaml`, `run.json`, the trajectory CSV, a trajectory PDF and runner logs.
 The generated config also works with `demo-single`.
 
-Run output and `run.json` report the saved pose count and input/trajectory time
-spans. The initial full ORB-SLAM2 check on the April sample processed 528 pairs but
-retained only 7 keyframes spanning 5.5 seconds. This verifies execution, not robust
-tracking across that recording; the fixed 4 ms bracket can be unsuitable for some
-lighting conditions.
+Run output and `run.json` report pose count, input/trajectory spans, reference
+coverage, RMSE, and temporal completion. The initial full ORB-SLAM2 check on the
+April sample processed 528 pairs but retained only 7 keyframes spanning 5.5
+seconds. This verifies execution, not robust tracking across that recording; the
+fixed 4 ms bracket can be unsuitable for some lighting conditions.
 
 Conversion uses exact matching nanosecond filenames for stereo pairing. Unmatched
 frames are counted in `borealhdr.json`. Raw Bayer RG images are demosaiced to gray,
@@ -142,7 +245,6 @@ to the actual PNG dimensions; both cameras use a common rectified intrinsic
 matrix. Source images are not changed.
 
 The inspected local recordings contain raw LiDAR, GNSS and IMU measurements but
-no pose ground-truth trajectory. This integration does not turn those measurements
-into a reference trajectory: plots show SLAM only and no reference RMSE is claimed.
-`eval-metrics-single` still requires a supplied `groundtruth.csv` in the prepared
-sequence. Automatic exposure control is deferred.
+no supplied pose ground-truth trajectory. FAST-LIO generates a locally derived
+reference; its accuracy is not equivalent to surveyed ground truth or the authors'
+published lidar reference. Automatic exposure control is deferred.

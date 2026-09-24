@@ -238,12 +238,18 @@ def main():
     if args.action == 'demo' and sys.platform.startswith('linux') and not os.environ.get('DISPLAY'):
         parser.error('Demo requires an X display; run from a desktop terminal or use run for headless SLAM')
     from Baselines.get_baseline import get_baseline, list_available_baselines
-    from Run.single_sequence import run_single_baseline
+    from Run.single_sequence import evaluate_single_trajectory, run_single_baseline
     if args.slam not in list_available_baselines() or args.mode not in get_baseline(args.slam).modes:
         parser.error('Choose a registered SLAM with support for the requested camera mode')
     sequence = prepare(args.root, args.sequence, args.code, args.output, args.exposure_yaml)
     if args.action == 'prepare':
         return
+    from Utilities.boreal_reference import ensure_full_reference, materialize_camera_reference
+    season = 'april_2023' if args.sequence.startswith('backpack_2023-04-') else 'september_2023'
+    left_calibration = args.code / 'calibration_files/calibration_vo' / season / 'left.yaml'
+    reference_trajectory = ensure_full_reference(args.root / args.sequence,
+                                                 args.output / 'fastlio_reference')
+    reference = materialize_camera_reference(reference_trajectory, sequence, left_calibration)
     run = args.output / 'results' / args.sequence / (datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S_%f') + '_' + args.slam)
     run.mkdir(parents=True)
     if args.exposure_yaml:
@@ -252,19 +258,24 @@ def main():
             shutil.copy2(sequence / filename, run / filename)
     config = run / 'config.yaml'
     config.write_text(yaml.safe_dump({'DATASET': {'base_path': str(sequence.parent), 'name': args.sequence,
-        'dataset': 'borealhdr', 'baseline': args.slam, 'sensor_type': args.mode, 'output_dir': str(run.resolve())}}))
+        'dataset': 'borealhdr', 'baseline': args.slam, 'sensor_type': args.mode, 'output_dir': str(run.resolve())},
+        'EVALUATION': {'max_time_difference_s': 0.02, 'reference_name': 'boreal_fast_lio',
+        'reference_metadata': reference,
+        'warnings': ['Boreal FAST-LIO is an experimental lidar/IMU reference, not surveyed ground truth.']}}))
     print(f'Configuration: {config}', flush=True)
     state = {'sequence': args.sequence, 'baseline': args.slam, 'mode': args.mode,
              'exposure_ms': None if args.exposure_yaml else 4,
              'exposure_mode': 'scheduled' if args.exposure_yaml else 'fixed',
              'prepared_sequence': str(sequence), 'source': str(args.root / args.sequence),
              'started_at': datetime.now(timezone.utc).isoformat(), 'status': 'running',
-             'groundtruth': 'not supplied', 'config': str(config)}
+             'groundtruth': 'boreal_fast_lio', 'reference_trajectory': str(reference_trajectory),
+             'reference_frames': reference['reference_frames'],
+             'reference_coverage': reference['reference_coverage'], 'config': str(config)}
     state_path = run / 'run.json'
     state_path.write_text(json.dumps(state, indent=2))
     try:
         trajectory = run_single_baseline(config, headless=args.action == 'run')
-        from Evaluate.pairwise_metrics import read_pose_trajectory, write_combined_report
+        from Evaluate.pairwise_metrics import read_pose_trajectory
         poses = read_pose_trajectory(trajectory)
         import pandas as pd
         input_stamps = pd.read_csv(sequence / 'rgb.csv').iloc[:, 0].to_numpy(dtype=np.int64)
@@ -274,9 +285,12 @@ def main():
                      trajectory_duration_s=trajectory_duration)
         print(f'Saved {poses.num_poses} poses spanning {trajectory_duration:.1f}s; '
               f'input spans {input_duration:.1f}s. Keyframes are sparse; check temporal coverage.', flush=True)
-        write_combined_report({'vslam': poses}, run / 'trajectory_report.pdf',
-                              f'{args.slam}: {args.sequence} (no reference)')
-        state.update(status='complete', trajectory=str(trajectory), poses=poses.num_poses)
+        metrics_path = evaluate_single_trajectory(config, trajectory)
+        metrics = json.loads(metrics_path.read_text(encoding='utf-8'))
+        state.update(status='complete', trajectory=str(trajectory), poses=poses.num_poses,
+                     metrics=str(metrics_path), trajectory_report=str(run / 'trajectory_report.pdf'),
+                     translation_ape_rmse_m=metrics['rmse']['translation'],
+                     temporal_completion_ratio=metrics['temporal_completion_ratio'])
     except Exception as error:
         state.update(status='failed', error=str(error))
         raise
@@ -284,7 +298,11 @@ def main():
         state['finished_at'] = datetime.now(timezone.utc).isoformat()
         state_path.write_text(json.dumps(state, indent=2))
     print(f'Trajectory: {trajectory}', flush=True)
-    print('Reference poses are not supplied; no ground-truth metrics computed.', flush=True)
+    print(f"Boreal FAST-LIO reference: {reference['reference_frames']}/{reference['input_frames']} "
+          f"selected frames; translation APE RMSE: {state['translation_ape_rmse_m']:.3f} m; "
+          f"temporal completion: {state['temporal_completion_ratio']:.1%}", flush=True)
+    print(f"Metrics: {metrics_path}", flush=True)
+    print(f"Trajectory report: {run / 'trajectory_report.pdf'}", flush=True)
 
 
 if __name__ == '__main__':

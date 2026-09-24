@@ -57,21 +57,40 @@ class BorealHDRTests(unittest.TestCase):
                 sequence = root / 'sequences/example'
                 sequence.mkdir(parents=True)
                 (sequence / 'rgb.csv').write_text('ts_rgb_0 (ns),path_rgb_0\n'
-                                                 '1000000000,rgb_0/1.png\n3000000000,rgb_0/3.png\n')
+                                                 '1000000000,rgb_0/1.png\n2000000000,rgb_0/2.png\n'
+                                                 '3000000000,rgb_0/3.png\n')
+                calibration = root / 'code/calibration_files/calibration_vo/september_2023'
+                calibration.mkdir(parents=True)
+                (calibration / 'left.yaml').write_text(yaml.safe_dump({
+                    'rectification_matrix': {'data': np.eye(3).ravel().tolist()}}))
+                reference = root / 'fast_lio.csv'
+                reference.write_text('ts (ns),tx (m),ty (m),tz (m),qx,qy,qz,qw\n'
+                                     '0,0,0,0,0,0,0,1\n'
+                                     '1000000000,1,0,0,0,0,0,1\n'
+                                     '2000000000,2,1,0,0,0,0,1\n'
+                                     '3000000000,3,0,0,0,0,0,1\n'
+                                     '4000000000,4,0,0,0,0,0,1\n')
                 trajectory = root / 'trajectory.csv'
                 trajectory.write_text('ts (ns),x,y,z,qx,qy,qz,qw\n'
                                       '1000000000,0,0,0,0,0,0,1\n'
                                       '2000000000,1,0,0,0,0,0,1\n'
                                       '3000000000,1,1,0,0,0,0,1\n')
-                with patch.object(sys, 'argv', ['borealhdr', action, 'example', '--output', str(root)]), \
+                with patch.object(sys, 'argv', ['borealhdr', action, 'example', '--output', str(root),
+                                                '--code', str(root / 'code')]), \
                      patch.dict('os.environ', {'DISPLAY': ':99'}), \
                      patch('Utilities.borealhdr.prepare', return_value=sequence), \
+                     patch('Utilities.boreal_reference.ensure_full_reference', return_value=reference), \
                      patch('Run.single_sequence.run_single_baseline', return_value=trajectory) as runner:
                     main()
                 self.assertEqual(runner.call_args.kwargs['headless'], headless)
                 state = next((root / 'results').glob('*/*/run.json'))
                 self.assertEqual(json.loads(state.read_text())['status'], 'complete')
                 self.assertTrue((state.parent / 'trajectory_report.pdf').is_file())
+                self.assertTrue((state.parent / 'metrics.json').is_file())
+                metrics = json.loads((state.parent / 'metrics.json').read_text())
+                self.assertEqual(metrics['primary_reference'], 'boreal_fast_lio')
+                self.assertIn('vslam_vs_boreal_fast_lio', metrics['comparisons'])
+                self.assertEqual(len(pd.read_csv(sequence / 'groundtruth.csv')), 3)
 
     def test_preparation_scales_calibration_pairs_timestamps_and_reuses_cache(self):
         with tempfile.TemporaryDirectory() as directory:
