@@ -30,7 +30,7 @@ With a verified shared bundle, the following command prints
 
 ```bash
 pixi run -e vslamlab borealhdr demo backpack_2023-04-20-09-29-14 \
-  --slam orbslam3 --mode stereo
+  --slam orbslam3 --mode stereo --shared-only
 ```
 
 The April reference is published under
@@ -44,6 +44,9 @@ If a shared bundle is present but invalid, the command fails rather than silentl
 replacing or regenerating it. If no shared bundle exists, it reuses a verified
 local run or generates one with ROS 2/FAST-LIO. Prepared camera poses and SLAM
 results remain local. The runner never writes to the shared reference directory.
+Pass `--shared-only` to `run` or `demo` to require a validated shared sidecar:
+an unpublished sequence fails before SLAM and will not start FAST-LIO. This is
+the recommended mode while working with the currently validated subset.
 
 To check the published April bundle without generating anything:
 

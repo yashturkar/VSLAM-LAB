@@ -228,6 +228,8 @@ def main():
     parser.add_argument('--reference-root', type=Path,
                         default=Path('/mnt/share/nas/eph/BorealHDR-references/fastlio-v1'),
                         help='Read-only shared FAST-LIO reference bundles')
+    parser.add_argument('--shared-only', action='store_true',
+                        help='Require a validated shared reference; never generate FAST-LIO locally')
     parser.add_argument('--exposure-yaml', type=Path, help='Zero-based frame: exposure_ms mapping; hold until next entry')
     args = parser.parse_args()
     args.root = args.root.expanduser().resolve()
@@ -245,14 +247,20 @@ def main():
     from Run.single_sequence import evaluate_single_trajectory, run_single_baseline
     if args.slam not in list_available_baselines() or args.mode not in get_baseline(args.slam).modes:
         parser.error('Choose a registered SLAM with support for the requested camera mode')
+    from Utilities.boreal_reference import ensure_full_reference, materialize_camera_reference
+    reference_trajectory = None
+    if args.shared_only and args.action in ('run', 'demo'):
+        reference_trajectory = ensure_full_reference(
+            args.root / args.sequence, args.output / 'fastlio_reference',
+            args.reference_root, shared_only=True)
     sequence = prepare(args.root, args.sequence, args.code, args.output, args.exposure_yaml)
     if args.action == 'prepare':
         return
-    from Utilities.boreal_reference import ensure_full_reference, materialize_camera_reference
     season = 'april_2023' if args.sequence.startswith('backpack_2023-04-') else 'september_2023'
     left_calibration = args.code / 'calibration_files/calibration_vo' / season / 'left.yaml'
-    reference_trajectory = ensure_full_reference(args.root / args.sequence,
-                                                 args.output / 'fastlio_reference', args.reference_root)
+    if reference_trajectory is None:
+        reference_trajectory = ensure_full_reference(
+            args.root / args.sequence, args.output / 'fastlio_reference', args.reference_root)
     reference = materialize_camera_reference(reference_trajectory, sequence, left_calibration)
     run = args.output / 'results' / args.sequence / (datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S_%f') + '_' + args.slam)
     run.mkdir(parents=True)

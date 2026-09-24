@@ -53,7 +53,8 @@ def _validated_full_reference(folder: Path, source: Path, first_ns: int, last_ns
 
 
 def ensure_full_reference(source: Path, output_root: Path = FAST_LIO_OUTPUT_ROOT,
-                          shared_root: Path = SHARED_ROOT) -> Path:
+                          shared_root: Path = SHARED_ROOT,
+                          shared_only: bool = False) -> Path:
     """Reuse a verified full run or generate one from the source CSVs."""
     source = source.resolve()
     shared = shared_trajectory(source, shared_root)
@@ -62,6 +63,9 @@ def ensure_full_reference(source: Path, output_root: Path = FAST_LIO_OUTPUT_ROOT
         return shared
     if (shared_root / source.name).exists():
         raise ValueError(f"Shared Boreal reference is present but invalid: {shared_root / source.name}")
+    if shared_only:
+        raise FileNotFoundError(f"No validated shared Boreal reference for {source.name} under {shared_root}; "
+                                "refusing local FAST-LIO generation")
     first_ns, last_ns = _raw_scan_span(source)
     parent = output_root.resolve() / source.name
     for folder in sorted(parent.glob("*_full"), reverse=True):

@@ -335,7 +335,7 @@ Stereo is the default. Select a sequence and SLAM method from the repo root:
 pixi run -e vslamlab borealhdr list
 
 # Headless stereo with the default recorded 4 ms exposure
-pixi run -e vslamlab borealhdr run backpack_2023-04-20-09-29-14 --slam orbslam2 --mode stereo
+pixi run -e vslamlab borealhdr run backpack_2023-04-20-09-29-14 --slam orbslam2 --mode stereo --shared-only
 
 # Prepare images using the supplied varying-exposure schedule
 pixi run -e vslamlab borealhdr prepare backpack_2023-04-20-09-29-14 \
@@ -377,6 +377,8 @@ evaluate after SLAM using the same metrics path as `eval-metrics-single`.
 Validated shared sidecars under `/mnt/share/nas/eph/BorealHDR-references/fastlio-v1`
 are preferred; the runner reads but never writes them. Use
 `pixi run -e vslamlab boreal-reference-batch --all --check-only` to audit them.
+Use `--shared-only` with `borealhdr run/demo` to require a published reference
+instead of generating FAST-LIO for a missing sequence.
 Scheduled runs also save their resolved exposure YAML and per-frame exposure CSV.
 The resulting reference is locally estimated, not surveyed ground truth. Check
 temporal completion alongside RMSE. See [BorealHDR details](docs/BorealHDR.md)

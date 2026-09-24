@@ -40,10 +40,23 @@ class SharedBorealReferenceTests(unittest.TestCase):
             self.assertEqual(source_fingerprint(source), source_fingerprint(relocated))
             self.assertEqual(shared_trajectory(relocated, shared_root), published)
             self.assertEqual(ensure_full_reference(relocated, root / "empty_local", shared_root), published)
+            self.assertEqual(ensure_full_reference(relocated, root / "empty_local", shared_root,
+                                                   shared_only=True), published)
             (relocated / "imu/imu.csv").write_text("timestamp\n1\n")
             self.assertIsNone(shared_trajectory(relocated, shared_root))
             with self.assertRaises(ValueError):
                 ensure_full_reference(relocated, root / "empty_local", shared_root)
+            with self.assertRaises(ValueError):
+                ensure_full_reference(relocated, root / "empty_local", shared_root,
+                                      shared_only=True)
+
+    def test_shared_only_does_not_generate_when_bundle_missing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "backpack_missing"
+            source.mkdir()
+            with self.assertRaisesRegex(FileNotFoundError, "refusing local FAST-LIO generation"):
+                ensure_full_reference(source, root / "local", root / "shared", shared_only=True)
 
 
 if __name__ == "__main__":

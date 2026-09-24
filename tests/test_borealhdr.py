@@ -15,6 +15,18 @@ from Datasets.get_dataset import get_dataset
 
 
 class BorealHDRTests(unittest.TestCase):
+    def test_shared_only_checks_reference_before_preparing_images(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(sys, 'argv', ['borealhdr', 'run', 'example', '--shared-only',
+                                            '--output', directory]), \
+                 patch('Utilities.boreal_reference.ensure_full_reference',
+                       side_effect=FileNotFoundError('shared reference missing')) as reference, \
+                 patch('Utilities.borealhdr.prepare') as preparation:
+                with self.assertRaisesRegex(FileNotFoundError, 'shared reference missing'):
+                    main()
+            self.assertTrue(reference.call_args.kwargs['shared_only'])
+            preparation.assert_not_called()
+
     def test_schedule_validation_and_hold(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'exposure.yaml'
