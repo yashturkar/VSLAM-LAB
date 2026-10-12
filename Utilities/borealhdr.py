@@ -35,6 +35,7 @@ AE50_TARGET = 2048
 AE50_GAIN = 0.002
 AE50_THRESHOLD = 15
 AE_METHODS = ('classical', 'zhang', 'kim')
+SEPTEMBER_RECTIFICATION = REPO / 'configs/borealhdr_september_stereo_rectification.yaml'
 
 
 def ae_method_name(ae):
@@ -155,9 +156,13 @@ def ae50_tables(source, reference):
     tables = {bracket: stereo_table(source, bracket) for bracket in BRACKETS}
     if any(not table for table in tables.values()):
         raise ValueError('AE50 requires paired images in every exposure bracket')
-    period = float(np.median(np.diff([row[0] for row in reference])))
+    period = int(round(float(np.median(np.diff([row[0] for row in reference])))))
     tolerance = period / 4
-    offsets = {bracket: tables[bracket][0][0] - reference[0][0] for bracket in BRACKETS}
+    # A bracket may be missing its first pair. Its first available timestamp
+    # then belongs to a later cycle, so only its phase within the cycle is a
+    # valid offset from the reference bracket.
+    offsets = {bracket: (tables[bracket][0][0] - reference[0][0]) % period
+               for bracket in BRACKETS}
     times = {bracket: [row[0] for row in table] for bracket, table in tables.items()}
     aligned = {bracket: [] for bracket in BRACKETS}
     for stamp, _, _ in reference:
@@ -236,8 +241,48 @@ def discover(root):
                   if (p / 'camera_left/4.0').is_dir() and (p / 'camera_right/4.0').is_dir())
 
 
-def prepare(root, name, code, output, exposure_yaml=None, ae=False):
+def rectification_parameters(camera_configs, size, season, model=None):
+    """Return a shared projection and the rotations applied to raw camera rays."""
+    width, height = size
+    left = camera_configs[0]
+    right = camera_configs[1]
+    projection = np.array(left['projection_matrix']['data'], dtype=float).reshape(3, 4)
+    right_projection = np.array(right['projection_matrix']['data'], dtype=float).reshape(3, 4)
+    baseline = -right_projection[0, 3] / right_projection[0, 0]
+    if not np.isfinite(baseline) or baseline <= 0:
+        raise ValueError('Invalid stereo baseline')
+    projection[:2] *= np.array([width / left['image_width'],
+                                height / left['image_height']])[:, None]
+    if model is None:
+        rotations = [np.array(config['rectification_matrix']['data'], dtype=float).reshape(3, 3)
+                     for config in camera_configs]
+        return projection, baseline, rotations
+    if season != 'september_2023' or model.get('schema_version') != 1:
+        raise ValueError('Unsupported September stereo rectification model')
+    rotation = np.asarray(model['relative_rotation'], dtype=float)
+    direction = np.asarray(model['relative_translation_unit'], dtype=float)
+    if (rotation.shape != (3, 3) or direction.shape != (3,) or
+            not np.isfinite(rotation).all() or not np.isfinite(direction).all() or
+            not np.allclose(rotation.T @ rotation, np.eye(3), atol=1e-5) or
+            abs(np.linalg.det(rotation) - 1) > 1e-5 or
+            not np.isclose(np.linalg.norm(direction), 1, atol=1e-5) or direction[0] >= 0):
+        raise ValueError('Invalid September stereo extrinsics')
+    old_intrinsic = projection[:, :3].copy()
+    left_rect, right_rect, left_projection, right_projection, *_ = cv2.stereoRectify(
+        old_intrinsic, np.zeros(5), old_intrinsic, np.zeros(5), size,
+        rotation, (direction * baseline).reshape(3, 1),
+        flags=cv2.CALIB_ZERO_DISPARITY, alpha=0)
+    if (not np.isfinite(left_projection).all() or
+            not np.allclose(left_projection[:3, :3], right_projection[:3, :3], atol=1e-6) or
+            right_projection[0, 3] >= 0):
+        raise ValueError('September stereo rectification produced invalid projections')
+    return left_projection, baseline, [left_rect, right_rect]
+
+
+def prepare(root, name, code, output, exposure_yaml=None, ae=False, mode='stereo'):
     ae = ae_method_name(ae)
+    if mode not in ('mono', 'stereo'):
+        raise ValueError(f'Unsupported camera mode: {mode}')
     if ae and exposure_yaml is not None:
         raise ValueError('--ae and --exposure-yaml are mutually exclusive')
     if name not in discover(root):
@@ -249,6 +294,16 @@ def prepare(root, name, code, output, exposure_yaml=None, ae=False):
     season = 'april_2023' if name.startswith('backpack_2023-04-') else 'september_2023'
     calibration = code / 'calibration_files/calibration_vo' / season
     camera_configs = [yaml.safe_load((calibration / f'{side}.yaml').read_text()) for side in ('left', 'right')]
+    validated_september = name.startswith('backpack_2023-09-27-')
+    if season == 'september_2023' and not validated_september and mode == 'stereo':
+        raise ValueError('Fitted stereo rectification is validated only for 2023-09-27 recordings')
+    rectification_model = (yaml.safe_load(SEPTEMBER_RECTIFICATION.read_text())
+                           if validated_september else None)
+    if rectification_model:
+        for side in ('left', 'right'):
+            actual = hashlib.sha256((calibration / f'{side}.yaml').read_bytes()).hexdigest()
+            if actual != rectification_model['source_calibration_sha256'][side]:
+                raise ValueError(f'September stereo fit does not match {side} camera calibration')
     left = {int(p.stem): p for p in (source / 'camera_left/4.0').glob('*.png')}
     right = {int(p.stem): p for p in (source / 'camera_right/4.0').glob('*.png')}
     stamps = sorted(left.keys() & right.keys())
@@ -272,29 +327,39 @@ def prepare(root, name, code, output, exposure_yaml=None, ae=False):
     source_files = ([p for bracket in BRACKETS for side in ('left', 'right')
                      for p in sorted((source / f'camera_{side}' / str(bracket)).glob('*.png'))] if ae else
                     [p for stamp in stamps for p in (left[stamp], right[stamp])])
+    ae_selection = ('closer_least_sat_shared_lower' if mode == 'stereo' else
+                    'closer_least_sat_per_camera')
     fingerprint_input = {
-        'version': 4 if ae == 'classical' else 5 if ae else 2,
+        'version': (7 if ae else 3) if rectification_model else (6 if ae else 2),
         'source': str(source), 'calibration': camera_configs,
         'exposures': exposures, 'curve': curve.tolist() if needs_curve else None,
         'files': [(str(p), p.stat().st_size, p.stat().st_mtime_ns) for p in source_files],
     }
+    if rectification_model:
+        # Hash the optical model, while calibration file contents are already
+        # represented above. Provenance-only YAML fields need not invalidate images.
+        fingerprint_input['rectification_model'] = {
+            key: rectification_model[key] for key in
+            ('schema_version', 'id', 'fit_sequences', 'relative_rotation', 'relative_translation_unit')}
     if ae:
         fingerprint_input['ae'] = {'source': ae_source(ae), 'target': AE50_TARGET,
                                    'gain': AE50_GAIN, 'threshold': AE50_THRESHOLD,
-                                   'initial_ms': 4., 'selection': 'closer_least_sat_per_camera',
+                                   'initial_ms': 4., 'selection': ae_selection,
                                    'response_curve': 'pcalib_inside1.txt'}
         if ae == 'kim':
             fingerprint_input['ae']['gp_seed'] = KIM_GP_SEED
         if ae == 'zhang':
             fingerprint_input['ae']['weight_size'] = 'actual_bayer_pixels'
     fingerprint = hashlib.sha256(json.dumps(fingerprint_input, sort_keys=True).encode()).hexdigest()
-    variant = output / 'exposure_variants' / fingerprint if exposure_yaml or ae else output
+    variant = output / 'exposure_variants' / fingerprint if exposure_yaml or ae or rectification_model else output
     sequence = variant / 'sequences' / name
     marker = sequence / 'borealhdr.json'
     if marker.is_file():
         metadata = json.loads(marker.read_text())
         cached_files = ('rgb.csv', 'calibration.yaml', 'exposure.csv', 'exposure.yaml', 'ae_trace.csv') if ae else (
             'rgb.csv', 'calibration.yaml', 'exposure.csv')
+        if rectification_model:
+            cached_files += ('left_rectification.yaml',)
         if ae and (sequence / 'exposure.csv').is_file():
             with (sequence / 'exposure.csv').open(newline='') as stream:
                 cached_stamps = [(int(row['timestamp_ns']), int(row['right_timestamp_ns']))
@@ -315,19 +380,15 @@ def prepare(root, name, code, output, exposure_yaml=None, ae=False):
         raise ValueError('Cannot decode first image')
     height, width = first.shape[:2]
     size = (width, height)
-    projection = np.array(camera_configs[0]['projection_matrix']['data']).reshape(3, 4)
-    right_projection = np.array(camera_configs[1]['projection_matrix']['data']).reshape(3, 4)
-    baseline = -right_projection[0, 3] / right_projection[0, 0]
-    if baseline <= 0:
-        raise ValueError('Invalid stereo baseline')
-    projection[:2] *= np.array([width / camera_configs[0]['image_width'], height / camera_configs[0]['image_height']])[:, None]
+    projection, baseline, rotations = rectification_parameters(
+        camera_configs, size, season, rectification_model)
     maps = []
-    for config in camera_configs:
+    for config, rotation in zip(camera_configs, rotations):
         intrinsic = np.array(config['camera_matrix']['data']).reshape(3, 3)
         intrinsic[:2] *= np.array([width / config['image_width'], height / config['image_height']])[:, None]
         maps.append(cv2.initUndistortRectifyMap(
             intrinsic, np.array(config['distortion_coefficients']['data']),
-            np.array(config['rectification_matrix']['data']).reshape(3, 3),
+            rotation,
             projection[:, :3], size, cv2.CV_16SC2))
     for folder in ('rgb_0', 'rgb_1'):
         (sequence / folder).mkdir(parents=True, exist_ok=True)
@@ -338,25 +399,33 @@ def prepare(root, name, code, output, exposure_yaml=None, ae=False):
         controller = KimController() if ae == 'kim' else ZhangController(curve) if ae == 'zhang' else None
     for i in range(len(stamps)):
         if ae:
-            selected = []
-            raw_images = []
-            for index in (0, 1):
-                decoded = {}
+            decoded = [{}, {}]
 
-                def image_for_bracket(bracket):
-                    if bracket not in decoded:
-                        path = tables[bracket][i][index + 1]
-                        raw = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
-                        if raw is None or raw.shape != (height, width) or raw.dtype != np.uint16:
-                            raise ValueError(f'Expected 12-bit Bayer in uint16 PNG: {path}')
-                        decoded[bracket] = raw
-                    return decoded[bracket]
+            def image_for_bracket(index, bracket):
+                if bracket not in decoded[index]:
+                    path = tables[bracket][i][index + 1]
+                    raw = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+                    if raw is None or raw.shape != (height, width) or raw.dtype != np.uint16:
+                        raise ValueError(f'Expected 12-bit Bayer in uint16 PNG: {path}')
+                    decoded[index][bracket] = raw
+                return decoded[index][bracket]
 
-                bracket = ae50_source_bracket(current_exposure, image_for_bracket)
-                selected.append((bracket, tables[bracket][i][0], tables[bracket][i][index + 1]))
-                raw_images.append(image_for_bracket(bracket))
+            choices = [ae50_source_bracket(
+                current_exposure, lambda bracket, index=index: image_for_bracket(index, bracket))
+                for index in (0, 1)]
+            if mode == 'stereo':
+                # Upstream chooses per camera, but stereo geometry requires
+                # simultaneous images. If its choices differ, use the shorter
+                # bracket for both cameras to limit highlight clipping.
+                choices = [min(choices)] * 2
+            selected = [(bracket, tables[bracket][i][0], tables[bracket][i][index + 1])
+                        for index, bracket in enumerate(choices)]
+            raw_images = [image_for_bracket(index, bracket)
+                          for index, bracket in enumerate(choices)]
             left_bracket, stamp, left_path = selected[0]
             right_bracket, right_stamp, right_path = selected[1]
+            if mode == 'stereo' and stamp != right_stamp:
+                raise ValueError(f'AE stereo pair {i} is not synchronized: {stamp} != {right_stamp}')
             if rows and (rows[-1][3] >= stamp or rows[-1][7] >= right_stamp):
                 raise ValueError('Selected exposure timestamps are not strictly increasing')
             rows.append((i, current_exposure, left_bracket, stamp, left_path, right_path,
@@ -409,6 +478,11 @@ def prepare(root, name, code, output, exposure_yaml=None, ae=False):
               [[stamp, f'rgb_0/{stamp}.png', rows[i][7] if ae else stamp,
                 f'rgb_1/{rows[i][7] if ae else stamp}.png'] for i, stamp in enumerate(stamps)])
     write_calibration(sequence / 'calibration.yaml', projection, baseline, fps, size)
+    if rectification_model:
+        (sequence / 'left_rectification.yaml').write_text(yaml.safe_dump({
+            'rectification_model': rectification_model['id'],
+            'rectification_matrix': {'data': rotations[0].ravel().tolist()},
+        }))
     exposure_columns = ['frame_num', 'exposure_ms', 'source_bracket_ms', 'timestamp_ns',
                         'left_source', 'right_source']
     if ae:
@@ -430,7 +504,9 @@ def prepare(root, name, code, output, exposure_yaml=None, ae=False):
         'ae_method': ae, 'ae_controller': ae_source(ae), 'pairs': len(stamps),
         'ae_gp_seed': KIM_GP_SEED if ae == 'kim' else None,
         'ae_response_curve': 'pcalib_inside1.txt' if ae else None,
-        'ae_bracket_selection': 'closer_least_sat_per_camera' if ae else None,
+        'ae_bracket_selection': ae_selection if ae else None,
+        'rectification_version': rectification_model['id'] if rectification_model else None,
+        'rectification_source': str(SEPTEMBER_RECTIFICATION) if rectification_model else str(calibration),
         'unmatched_left': unmatched_left, 'unmatched_right': unmatched_right,
         'incomplete_cycles': original_cycles - len(stamps) if ae else 0,
         'fps': fps, 'groundtruth': 'not supplied'}, indent=2))
@@ -499,11 +575,13 @@ def main():
             args.root / args.sequence, args.output / 'fastlio_reference',
             args.reference_root, shared_only=True)
     sequence = prepare(args.root, args.sequence, args.code, args.output, args.exposure_yaml,
-                       ae=args.ae)
+                       ae=args.ae, mode=args.mode)
     if args.action == 'prepare':
         return
     season = 'april_2023' if args.sequence.startswith('backpack_2023-04-') else 'september_2023'
-    left_calibration = args.code / 'calibration_files/calibration_vo' / season / 'left.yaml'
+    prepared_rectification = sequence / 'left_rectification.yaml'
+    left_calibration = (prepared_rectification if prepared_rectification.is_file() else
+                        args.code / 'calibration_files/calibration_vo' / season / 'left.yaml')
     if reference_trajectory is None:
         reference_trajectory = ensure_full_reference(
             args.root / args.sequence, args.output / 'fastlio_reference', args.reference_root)
@@ -530,7 +608,8 @@ def main():
              'ae_method': args.ae, 'ae_controller': ae_source(args.ae),
              'ae_gp_seed': KIM_GP_SEED if args.ae == 'kim' else None,
              'ae_response_curve': 'pcalib_inside1.txt' if args.ae else None,
-             'ae_bracket_selection': 'closer_least_sat_per_camera' if args.ae else None,
+             'ae_bracket_selection': ('closer_least_sat_shared_lower' if args.mode == 'stereo' else
+                                      'closer_least_sat_per_camera') if args.ae else None,
              'prepared_sequence': str(sequence), 'source': str(args.root / args.sequence),
              'started_at': datetime.now(timezone.utc).isoformat(), 'status': 'running',
              'groundtruth': 'boreal_fast_lio', 'reference_trajectory': str(reference_trajectory),

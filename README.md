@@ -402,6 +402,11 @@ for validation rules, frame indexing, and emulation behavior, and the
 Preparation prints exposure changes; cached inputs print their schedule before
 SLAM starts. These are preparation/input reports, not live SLAM playback updates.
 
+Check raw capture cycles, prepared stereo synchronization, and sampled image
+geometry with `pixi run -e vslamlab borealhdr-audit`. The
+[BorealHDR guide](docs/BorealHDR.md#capture-and-prepared-stereo-audit) explains
+its report, archived-cache failures, and the fitted September 27 rectification.
+
 Outputs live under `/mnt/share/local/eph/VSLAM/borealhdr`: prepared inputs are
 cached, and each run gets timestamped results with its trajectory, metrics JSON,
 trajectory PDF, and logs. `run` and `demo` generate or reuse a full FAST-LIO

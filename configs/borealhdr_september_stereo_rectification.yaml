@@ -1,0 +1,21 @@
+# Empirical stereo extrinsics for the six BorealHDR 2023-09-27 recordings.
+# The supplied September camera_info YAMLs have identity rectification rotations
+# and leave approximately 7-8 px of vertical disparity at 960x600. This fit
+# uses 11 paired 4 ms frames (25% and 75% of each recording where available),
+# 3,858 ORB ratio-test correspondences, and OpenCV essential-matrix RANSAC.
+# 2,837 essential-matrix inliers; 2,837 recoverPose inliers. Held-out frames
+# at 0%, 50%, and 99% of each recording had median vertical residual <1 px.
+# Translation is a direction; preparation scales it to the baseline encoded
+# in the supplied right-camera projection matrix, rather than claiming an
+# independently surveyed stereo baseline.
+schema_version: 1
+id: september_2023_stereo_fit_v1
+fit_sequences: backpack_2023-09-27-*
+source_calibration_sha256:
+  left: 5b2a6db95ea3668c3dff53e3a51cb64452cc40efc4c16bb379e50526d55c30aa
+  right: df91679e487e3b19a73a2b3c857edccff45d484bf3fd271863a793fb8d190127
+relative_rotation:
+  - [0.999975426059593, 0.0031255834973912744, -0.006275189617596608]
+  - [-0.003213282504259073, 0.9998966300984843, -0.014014418762219281]
+  - [0.006230737715855122, 0.014034238329736581, 0.9998821020810505]
+relative_translation_unit: [-0.999957046686702, 0.00695773969704423, -0.006123286692398405]

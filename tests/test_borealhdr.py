@@ -12,12 +12,42 @@ import yaml
 
 from Utilities.borealhdr import (discover, prepare, main, load_exposures, exposure_rows,
                                 convert_exposure, ae50_next_exposure, ae50_source_bracket,
-                                ae50_tables, response_curve, source_bracket)
+                                ae50_tables, response_curve, source_bracket,
+                                rectification_parameters, SEPTEMBER_RECTIFICATION)
 from Datasets.get_dataset import get_dataset
 from Run.single_sequence import BaselineRunError
 
 
 class BorealHDRTests(unittest.TestCase):
+    def test_september_rectification_uses_shared_projection_and_rotated_reference(self):
+        model = yaml.safe_load(SEPTEMBER_RECTIFICATION.read_text())
+        configs = []
+        for side in ('left', 'right'):
+            configs.append({'image_width': 1920, 'image_height': 1200,
+                            'projection_matrix': {'data': [1011., 0, 962., -180 if side == 'right' else 0,
+                                                           0, 1114., 580., 0, 0, 0, 1, 0]},
+                            'rectification_matrix': {'data': np.eye(3).ravel().tolist()}})
+        projection, baseline, rotations = rectification_parameters(
+            configs, (960, 600), 'september_2023', model)
+        self.assertAlmostEqual(baseline, 180 / 1011)
+        self.assertAlmostEqual(projection[0, 0], projection[1, 1])
+        self.assertGreater(np.linalg.norm(rotations[0] - np.eye(3)), 0.001)
+        self.assertGreater(np.linalg.norm(rotations[1] - np.eye(3)), 0.001)
+        for rotation in rotations:
+            np.testing.assert_allclose(rotation.T @ rotation, np.eye(3), atol=1e-6)
+
+    def test_unvalidated_september_stereo_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            name = 'backpack_2023-09-25-15-05-03'
+            calibration = root / 'code/calibration_files/calibration_vo/september_2023'
+            calibration.mkdir(parents=True)
+            for side in ('left', 'right'):
+                (root / 'data' / name / f'camera_{side}/4.0').mkdir(parents=True)
+                (calibration / f'{side}.yaml').write_text('{}')
+            with self.assertRaisesRegex(ValueError, 'validated only for 2023-09-27'):
+                prepare(root / 'data', name, root / 'code', root / 'out', mode='stereo')
+
     def test_shared_only_checks_reference_before_preparing_images(self):
         with tempfile.TemporaryDirectory() as directory:
             with patch.object(sys, 'argv', ['borealhdr', 'run', 'example', '--shared-only',
@@ -110,6 +140,7 @@ class BorealHDRTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory)
             reference = []
+            phase = {4.: 0, 8.: 40, 16.: 80, 32.: 120, 1.: 160, 2.: 200}
             for bracket in (1., 2., 4., 8., 16., 32.):
                 for side in ('left', 'right'):
                     folder = source / f'camera_{side}' / str(bracket)
@@ -117,7 +148,7 @@ class BorealHDRTests(unittest.TestCase):
                     for i in range(4):
                         if bracket == 16. and i == 1:
                             continue
-                        stamp = 1000 + i * 300 + int(bracket)
+                        stamp = 1000 + i * 300 + phase[bracket]
                         path = folder / f'{stamp}.png'
                         path.touch()
                         if bracket == 4. and side == 'left':
@@ -125,7 +156,29 @@ class BorealHDRTests(unittest.TestCase):
                                               'camera_right/4.0' / path.name))
             aligned = ae50_tables(source, reference)
             self.assertEqual(len(aligned[4.]), 3)
-            self.assertEqual([row[0] for row in aligned[16.]], [1016, 1616, 1916])
+            self.assertEqual([row[0] for row in aligned[16.]], [1080, 1680, 1980])
+
+    def test_ae_aligns_bracket_missing_first_cycle_without_shifting(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            reference = []
+            phase = {4.: 0, 8.: 40, 16.: 80, 32.: 120, 1.: 160, 2.: 200}
+            for bracket in (1., 2., 4., 8., 16., 32.):
+                for side in ('left', 'right'):
+                    folder = source / f'camera_{side}' / str(bracket)
+                    folder.mkdir(parents=True)
+                    for i in range(4):
+                        if bracket in (1., 16.) and i == 0:
+                            continue
+                        stamp = 1000 + i * 300 + phase[bracket]
+                        path = folder / f'{stamp}.png'
+                        path.touch()
+                        if bracket == 4. and side == 'left':
+                            reference.append((stamp, path, source / 'camera_right/4.0' / path.name))
+            aligned = ae50_tables(source, reference)
+            self.assertEqual([row[0] for row in aligned[4.]], [1300, 1600, 1900])
+            self.assertEqual([row[0] for row in aligned[16.]], [1380, 1680, 1980])
+            self.assertEqual([row[0] for row in aligned[1.]], [1460, 1760, 2060])
 
     def test_ae_cli_routing_and_conflict(self):
         for action in ('prepare', 'run', 'demo'):
@@ -136,6 +189,7 @@ class BorealHDRTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, 'reached prepare'):
                     main()
                 self.assertTrue(preparation.call_args.kwargs['ae'])
+                self.assertEqual(preparation.call_args.kwargs['mode'], 'stereo')
         for method in ('zhang', 'kim'):
             with self.subTest(method=method), \
                  patch.object(sys, 'argv', ['borealhdr', 'prepare', 'example', '--ae', method]), \
@@ -143,6 +197,12 @@ class BorealHDRTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, 'routed'):
                     main()
                 self.assertEqual(preparation.call_args.kwargs['ae'], method)
+        with patch.object(sys, 'argv', ['borealhdr', 'prepare', 'example', '--mode', 'mono',
+                                       '--ae', 'zhang']), \
+             patch('Utilities.borealhdr.prepare', side_effect=RuntimeError('routed')) as preparation:
+            with self.assertRaisesRegex(RuntimeError, 'routed'):
+                main()
+            self.assertEqual(preparation.call_args.kwargs['mode'], 'mono')
         with patch.object(sys, 'argv', ['borealhdr', 'prepare', 'example', '--ae',
                                        '--exposure-yaml', 'schedule.yaml']):
             with self.assertRaises(SystemExit):
@@ -161,6 +221,7 @@ class BorealHDRTests(unittest.TestCase):
                        np.linspace(0, 4095 / 16, 256))
             np.savetxt(root / 'code/calibration_files/pcalib_inside1.txt',
                        np.linspace(0, 4095 / 16, 256))
+            phase_ms = {4.: 0, 8.: 40, 16.: 80, 32.: 120, 1.: 160, 2.: 200}
             for side in ('left', 'right'):
                 config = {'image_width': 16, 'image_height': 12,
                           'camera_matrix': {'data': [10., 0, 8, 0, 10, 6, 0, 0, 1]},
@@ -173,14 +234,14 @@ class BorealHDRTests(unittest.TestCase):
                     folder = root / 'data' / name / f'camera_{side}' / str(bracket)
                     folder.mkdir(parents=True)
                     for i in range(4):
-                        stamp = 1_000_000_000 + i * 300_000_000 + int(bracket * 1_000_000)
+                        stamp = 1_000_000_000 + i * 300_000_000 + phase_ms[bracket] * 1_000_000
                         value = 1024 if side == 'left' else 3072
                         cv2.imwrite(str(folder / f'{stamp}.png'),
                                     np.full((12, 16), value, dtype=np.uint16))
-            # Upstream emulates each camera independently: left 8 ms falls back
-            # to 4 ms for saturation while right remains on 8 ms.
+            # Upstream selects left=4 ms and right=8 ms here. Stereo preparation
+            # must instead use the same shorter source bracket for both.
             left_8_frame_1 = (root / 'data' / name / 'camera_left/8.0' /
-                              f'{1_000_000_000 + 300_000_000 + 8_000_000}.png')
+                              f'{1_000_000_000 + 300_000_000 + phase_ms[8.] * 1_000_000}.png')
             cv2.imwrite(str(left_8_frame_1), np.full((12, 16), 4094, dtype=np.uint16))
             sequence = prepare(root / 'data', name, root / 'code', root / 'out', ae=True)
             self.assertIn('exposure_variants', sequence.parts)
@@ -191,9 +252,8 @@ class BorealHDRTests(unittest.TestCase):
             self.assertAlmostEqual(trace['next_exposure_ms'].iloc[0], 6.048)
             self.assertAlmostEqual(trace['exposure_ms'].iloc[1], 6.048)
             self.assertEqual(exposure['source_bracket_ms'].iloc[1], 4.)
-            self.assertEqual(exposure['right_source_bracket_ms'].iloc[1], 8.)
-            self.assertNotEqual(exposure['timestamp_ns'].iloc[1],
-                                exposure['right_timestamp_ns'].iloc[1])
+            self.assertEqual(exposure['right_source_bracket_ms'].iloc[1], 4.)
+            self.assertTrue((exposure['timestamp_ns'] == exposure['right_timestamp_ns']).all())
             rgb = pd.read_csv(sequence / 'rgb.csv')
             self.assertEqual(rgb['ts_rgb_0 (ns)'].iloc[1], exposure['timestamp_ns'].iloc[1])
             self.assertEqual(rgb['ts_rgb_1 (ns)'].iloc[1], exposure['right_timestamp_ns'].iloc[1])
@@ -202,9 +262,17 @@ class BorealHDRTests(unittest.TestCase):
             metadata = json.loads((sequence / 'borealhdr.json').read_text())
             self.assertEqual(metadata['exposure_mode'], 'ae50')
             self.assertEqual(metadata['ae_response_curve'], 'pcalib_inside1.txt')
-            self.assertEqual(metadata['ae_bracket_selection'], 'closer_least_sat_per_camera')
+            self.assertEqual(metadata['ae_bracket_selection'], 'closer_least_sat_shared_lower')
             with patch('Utilities.borealhdr.cv2.imread', side_effect=AssertionError('cached')):
                 self.assertEqual(prepare(root / 'data', name, root / 'code', root / 'out', ae=True), sequence)
+            mono_sequence = prepare(root / 'data', name, root / 'code', root / 'out', ae=True,
+                                    mode='mono')
+            self.assertNotEqual(mono_sequence, sequence)
+            mono_exposure = pd.read_csv(mono_sequence / 'exposure.csv')
+            self.assertEqual(mono_exposure['source_bracket_ms'].iloc[1], 4.)
+            self.assertEqual(mono_exposure['right_source_bracket_ms'].iloc[1], 8.)
+            self.assertNotEqual(mono_exposure['timestamp_ns'].iloc[1],
+                                mono_exposure['right_timestamp_ns'].iloc[1])
 
     def test_zhang_and_kim_preparations_have_distinct_traces_and_caches(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -214,6 +282,7 @@ class BorealHDRTests(unittest.TestCase):
             calibration.mkdir(parents=True)
             np.savetxt(root / 'code/calibration_files/pcalib_inside1.txt',
                        np.linspace(0, 4095 / 16, 256))
+            phase_ms = {4.: 0, 8.: 40, 16.: 80, 32.: 120, 1.: 160, 2.: 200}
             for side in ('left', 'right'):
                 config = {'image_width': 32, 'image_height': 24,
                           'camera_matrix': {'data': [20., 0, 16, 0, 20, 12, 0, 0, 1]},
@@ -226,7 +295,7 @@ class BorealHDRTests(unittest.TestCase):
                     folder = root / 'data' / name / f'camera_{side}' / str(bracket)
                     folder.mkdir(parents=True)
                     for i in range(3):
-                        stamp = 1_000_000_000 + i * 300_000_000 + int(bracket * 1_000_000)
+                        stamp = 1_000_000_000 + i * 300_000_000 + phase_ms[bracket] * 1_000_000
                         raw = np.random.default_rng(i + int(bracket) + (side == 'right')).integers(
                             400, 3600, size=(24, 32), dtype=np.uint16)
                         cv2.imwrite(str(folder / f'{stamp}.png'), raw)

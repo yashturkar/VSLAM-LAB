@@ -309,13 +309,17 @@ exceed the 1–32 ms recorded bracket range or equal zero. The image renderer
 uses an available bracket and the response curve to emulate that time; zero
 renders black. Exposures are controlled in milliseconds, not stops.
 
-For `--ae`, image emulation now also follows the pinned BorealHDR
-`Image_Emulator`: it uses `calibration_files/pcalib_inside1.txt` and selects
-the first recorded bracket at or above the requested time, falling back to the
-previous bracket if that candidate has more zero/4094-valued pixels. Above
-32 ms it uses the 32 ms bracket. This selection is made **separately for left
-and right**, as in the upstream code, so the two source images in a stereo pair
-can have different exposure brackets and acquisition timestamps. The requested
+For `--ae`, image emulation uses the pinned BorealHDR `Image_Emulator` response
+curve (`calibration_files/pcalib_inside1.txt`) and its bracket preference: the
+first recorded bracket at or above the requested time, falling back to the
+previous bracket if it has fewer zero/4094-valued pixels. Above 32 ms it uses
+the 32 ms bracket. Upstream makes that choice **separately for left and right**.
+In `--mode stereo`, this harness checks both choices and, when they differ,
+uses the shorter of the two brackets for **both cameras**. This conservative
+stereo adaptation keeps the pair synchronized at one acquisition timestamp;
+it is deliberately not pixel-for-pixel identical to the upstream per-camera
+emulator on those frames. `--mode mono` retains the independent upstream
+choices because only the left image is supplied to SLAM. The requested
 exposure time remains the same for both cameras; `rgb.csv`, `exposure.csv`, and
 `ae_trace.csv` record the selected sources. Fixed and YAML-scheduled runs keep
 the harness's previous `pcalib_forest2024.txt`/nearest-log behavior.
@@ -357,8 +361,14 @@ upstream pipeline: this harness aligns complete stereo capture cycles and
 rectifies/exports images for VSLAM-LAB. AE is
 computed sequentially while preparing the dataset, then SLAM runs on those
 static images; it is not feedback from SLAM or a live camera. Brackets are
-aligned to the 4 ms capture-cycle timestamps; cycles missing any paired bracket
-are excluded before AE starts, so a missing frame cannot shift later cycles.
+aligned to the 4 ms capture-cycle timestamps using each bracket's phase within
+the capture period; cycles missing any paired bracket are excluded before AE
+starts, including when a bracket's first cycle is absent. Thus a missing frame
+cannot shift later cycles.
+Earlier AE stereo variants made before the shared-bracket change can contain
+left/right images acquired at different times; do not use their stereo SLAM
+metrics as synchronized-stereo comparisons. The preparation fingerprint has
+changed, so new `--ae` runs cannot silently reuse those variants.
 The generated `exposure.yaml` records the per-frame requested times. For an
 **exact rerun**, reuse the prepared sequence and its saved run configuration:
 ordinary `--exposure-yaml` preparation can differ because AE meters before
@@ -370,6 +380,45 @@ which control branch was used; `borealhdr.json` and `run.json` record the
 method, pinned-source provenance, and Kim GP seed.
 Both files, `exposure.csv`, and controller provenance are copied into each run
 directory. AE preparations have their own fingerprinted cache.
+
+### Capture and prepared-stereo audit
+
+Run the read-only audit after preparing sequences or before comparing stereo
+SLAM results:
+
+```bash
+pixi run -e vslamlab borealhdr-audit
+pixi run -e vslamlab borealhdr-audit --replay --replay-frames 5
+# For a complete, slower controller replay, omit --replay-frames:
+pixi run -e vslamlab borealhdr-audit --replay
+```
+
+It checks every discoverable raw sequence for paired bracket images, capture
+order and cycle alignment. Missing raw stereo mates or incomplete bracket
+cycles are counted as warnings because preparation excludes them; a raw
+`pass` does not mean that every captured image is usable. It then checks every
+*existing* prepared exposure
+variant under the local `borealhdr/exposure_variants/` directory: manifest and
+CSV consistency, source timestamps and cycle identity, stereo synchronization,
+AE trace continuity, image files, and sampled rectified-image geometry. The
+optional `--replay` recomputes AE decisions from recorded raw inputs. Use
+`--replay-frames N` for a quick initial prefix check, or omit it to replay
+every frame; full replay, especially Kim, can be slow. The JSON states how
+many frames were replayed. `--samples 0` disables image-level matching, but not
+timestamp checks. Progress prints to the terminal; a detailed JSON report is
+written under `borealhdr/audits/` in local output storage. A nonzero exit code
+means at least one checked item failed. `--root`, `--code`, `--output`, and
+`--report` can override paths; the report cannot be written to NAS.
+
+This checks available data only: it does **not** prepare every controller on
+every sequence or run SLAM. Older per-camera AE preparations can fail stereo
+sync by design and remain in the cache for provenance; a new `--ae` preparation
+uses the shared-bracket policy. The image check is an additional calibration/
+rectification diagnostic, not proof of hardware synchronization.
+The JSON retains failures for superseded preparations, but the default exit
+code checks current preparations only. Add `--strict-history` if an archived
+failure should also make the command exit nonzero. The summary separates
+`current_failed` and `superseded_failed` so neither is hidden.
 
 If the native SLAM process crashes, the command now stops before evaluation and
 reports its exit code/signal and log path. `run.json` records these details;
@@ -392,9 +441,24 @@ fixed 4 ms bracket can be unsuitable for some lighting conditions.
 Conversion uses exact matching nanosecond filenames for stereo pairing. Unmatched
 frames are counted in `borealhdr.json`. Raw Bayer RG images are demosaiced to gray,
 mapped from 12-bit to 8-bit using a fixed division by 16, and rectified using the
-April or September calibration from the source checkout. Intrinsics are scaled
-to the actual PNG dimensions; both cameras use a common rectified intrinsic
-matrix. Source images are not changed.
+April or September calibration from the source checkout. The supplied September
+camera-info files have identity rectification rotations and produced 7–8 px
+vertical disparity on the six September 27 stereo recordings. September
+preparations now combine those camera intrinsics/distortion parameters with the
+versioned [fitted stereo extrinsics](../configs/borealhdr_september_stereo_rectification.yaml).
+The fit used 11 pairs spread across those six recordings; held-out pairs from
+each had median vertical residual below 1 px. This is an **empirical** stereo
+rectification, not a surveyed calibration or an independently measured baseline.
+Its translation direction is scaled to the baseline in the supplied right-camera
+projection. Validate other September recordings before interpreting their stereo
+metrics; the runner currently refuses stereo preparation for September dates
+outside the validated September 27 set. The fitted left rotation is saved in
+each prepared variant as `left_rectification.yaml` and used when converting the
+FAST-LIO reference into rectified camera poses. New fingerprints keep older
+images and results intact; old September stereo metrics should not be mixed
+with newly rectified runs. Intrinsics are scaled to the actual PNG dimensions;
+both cameras use a common rectified intrinsic matrix. Source images are not
+changed.
 
 The inspected local recordings contain raw LiDAR, GNSS and IMU measurements but
 no supplied pose ground-truth trajectory. FAST-LIO generates a locally derived
