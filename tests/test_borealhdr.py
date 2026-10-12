@@ -136,6 +136,13 @@ class BorealHDRTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, 'reached prepare'):
                     main()
                 self.assertTrue(preparation.call_args.kwargs['ae'])
+        for method in ('zhang', 'kim'):
+            with self.subTest(method=method), \
+                 patch.object(sys, 'argv', ['borealhdr', 'prepare', 'example', '--ae', method]), \
+                 patch('Utilities.borealhdr.prepare', side_effect=RuntimeError('routed')) as preparation:
+                with self.assertRaisesRegex(RuntimeError, 'routed'):
+                    main()
+                self.assertEqual(preparation.call_args.kwargs['ae'], method)
         with patch.object(sys, 'argv', ['borealhdr', 'prepare', 'example', '--ae',
                                        '--exposure-yaml', 'schedule.yaml']):
             with self.assertRaises(SystemExit):
@@ -198,6 +205,45 @@ class BorealHDRTests(unittest.TestCase):
             self.assertEqual(metadata['ae_bracket_selection'], 'closer_least_sat_per_camera')
             with patch('Utilities.borealhdr.cv2.imread', side_effect=AssertionError('cached')):
                 self.assertEqual(prepare(root / 'data', name, root / 'code', root / 'out', ae=True), sequence)
+
+    def test_zhang_and_kim_preparations_have_distinct_traces_and_caches(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            name = 'backpack_2023-04-20-09-29-14'
+            calibration = root / 'code/calibration_files/calibration_vo/april_2023'
+            calibration.mkdir(parents=True)
+            np.savetxt(root / 'code/calibration_files/pcalib_inside1.txt',
+                       np.linspace(0, 4095 / 16, 256))
+            for side in ('left', 'right'):
+                config = {'image_width': 32, 'image_height': 24,
+                          'camera_matrix': {'data': [20., 0, 16, 0, 20, 12, 0, 0, 1]},
+                          'distortion_coefficients': {'data': [0.] * 5},
+                          'rectification_matrix': {'data': np.eye(3).ravel().tolist()},
+                          'projection_matrix': {'data': [20., 0, 16, -2 if side == 'right' else 0,
+                                                         0, 20, 12, 0, 0, 0, 1, 0]}}
+                (calibration / f'{side}.yaml').write_text(yaml.safe_dump(config))
+                for bracket in (1., 2., 4., 8., 16., 32.):
+                    folder = root / 'data' / name / f'camera_{side}' / str(bracket)
+                    folder.mkdir(parents=True)
+                    for i in range(3):
+                        stamp = 1_000_000_000 + i * 300_000_000 + int(bracket * 1_000_000)
+                        raw = np.random.default_rng(i + int(bracket) + (side == 'right')).integers(
+                            400, 3600, size=(24, 32), dtype=np.uint16)
+                        cv2.imwrite(str(folder / f'{stamp}.png'), raw)
+            prepared = {}
+            for method in ('zhang', 'kim'):
+                prepared[method] = prepare(root / 'data', name, root / 'code', root / 'out', ae=method)
+                metadata = json.loads((prepared[method] / 'borealhdr.json').read_text())
+                trace = pd.read_csv(prepared[method] / 'ae_trace.csv')
+                self.assertEqual(metadata['ae_method'], method)
+                self.assertEqual(metadata['exposure_mode'], f'ae_{method}')
+                self.assertEqual(trace['ae_method'].tolist(), [method] * 3)
+                self.assertTrue(trace['next_exposure_ms'].notna().all())
+                self.assertTrue((trace['next_exposure_ms'] >= 0).all())
+                with patch('Utilities.borealhdr.cv2.imread', side_effect=AssertionError('cached')):
+                    self.assertEqual(prepare(root / 'data', name, root / 'code', root / 'out', ae=method),
+                                     prepared[method])
+            self.assertNotEqual(prepared['zhang'], prepared['kim'])
 
     def test_cli_routes_headless_and_demo_and_records_results(self):
         for action, headless, ae, ae_plot, crash, few in [

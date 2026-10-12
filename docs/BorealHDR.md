@@ -264,13 +264,19 @@ are input summaries, not live SLAM playback progress.
 
 `--ae` runs the **classical-50** controller from the
 [pinned BorealHDR source](https://github.com/norlab-ulaval/BorealHDR/blob/042befac24efb256ab2a3c787c758a88a490c290/scripts/classes/class_auto_exposure_methods.py#L117-L159).
-It works with `prepare`, `run`, and `demo`, but cannot be combined with
+`--ae classical` is equivalent. `--ae zhang` and `--ae kim` select the other
+two [controllers in that pinned revision](https://github.com/norlab-ulaval/BorealHDR/blob/042befac24efb256ab2a3c787c758a88a490c290/scripts/classes/class_auto_exposure_methods.py#L159-L416).
+All three work with `prepare`, `run`, and `demo`, but cannot be combined with
 `--exposure-yaml`:
 
 ```bash
 pixi run -e vslamlab borealhdr prepare backpack_2023-04-20-14-07-00 --ae
 pixi run -e vslamlab borealhdr run backpack_2023-04-20-14-07-00 --slam orbslam2 --mode stereo --shared-only --ae
 pixi run -e vslamlab borealhdr demo backpack_2023-04-20-14-07-00 --slam orbslam3 --mode stereo --shared-only --ae
+
+# Alternative BorealHDR controllers (headless examples):
+pixi run -e vslamlab borealhdr run backpack_2023-04-20-14-07-00 --slam pycuvslam --mode stereo --shared-only --ae zhang
+pixi run -e vslamlab borealhdr run backpack_2023-04-20-14-07-00 --slam pycuvslam --mode stereo --shared-only --ae kim
 ```
 
 Add `--ae-plot` to a `demo --ae` command to open a second window with the
@@ -292,8 +298,9 @@ running AE demo, run `pixi run -e vslamlab python
 Utilities/boreal_ae_plot.py <prepared_sequence_path>`; it can observe only
 frames opened after it starts.
 
-Frame 0 starts at 4 ms. Both cameras use the same exposure at each frame.
-AE50 converts the emulated **left Bayer image** to 12-bit gray with
+Frame 0 starts at 4 ms. Both cameras use the same requested exposure at each
+frame; all controllers meter the emulated **left Bayer image** and choose the
+next frame's exposure. Classical-50 converts that image to 12-bit gray with
 `COLOR_BAYER_RG2GRAY` and meters its mean. The target is 2048 digital counts
 (50% of 4096); errors strictly below 15 counts hold exposure. Otherwise the
 next frame uses the pinned controller's `abs(current_ms + 0.002 ×
@@ -313,6 +320,33 @@ exposure time remains the same for both cameras; `rgb.csv`, `exposure.csv`, and
 `ae_trace.csv` record the selected sources. Fixed and YAML-scheduled runs keep
 the harness's previous `pcalib_forest2024.txt`/nearest-log behavior.
 
+Zhang uses the pinned soft-percentile gradient/CRF-derivative update, switches
+to classical-50 when mean brightness falls outside its 70–190/256 bounds, and
+enforces its 0.02 ms minimum. The pinned code hard-codes a weight vector for
+1920×1200 pixels; the supplied Boreal Bayer PNGs are 960×600, so this harness
+computes the **same weight formula at the actual image size**. Without that
+size adaptation, the pinned code cannot multiply the per-pixel gradients for
+these files. Kim uses the pinned entropy-weighted gradient score, Gaussian
+process with ten optimizer restarts, MAXMI acquisition, and five-observation
+window. Its upstream GP restarts are unseeded; this harness uses a persistent
+seed of 0 so identical inputs produce reproducible cached exposures. These
+two adaptations mean Zhang/Kim are faithful implementations of the pinned
+controller logic, **not bit-for-bit invocations of unmodified upstream code**.
+Kim's optimization can make preparation substantially slower than classical-50.
+
+**Kim interpretation caveat.** Its five-observation GP can jump directly to
+either end of the 0.5–35 ms search range; this implementation deliberately does
+not add a step limiter or clipped-pixel veto, because those would change the
+pinned baseline. In one `backpack_2023-04-20-14-07-00` PyCuVSLAM run, Kim jumped
+from 4.713 to 35 ms at frame 310. The selected 32 ms source image was already
+90.9% clipped, yet Kim's image-quality metric increased and it stayed at 35 ms
+for the remaining 33 frames. The resulting translation APE RMSE was 14.57 m
+despite 100% temporal completion. A seeded, full 344-frame replay through the
+upstream `Metric_Kim` produced exactly the same exposure decisions, so this is
+an observed limitation of this controller on those inputs, not evidence of a
+porting discrepancy. Inspect `ae_trace.csv`, saturation, and path-length ratio
+alongside SLAM metrics when comparing controllers.
+
 The earlier AE implementation reproduced the pinned **controller** but used
 the harness's existing forest CRF and nearest-log bracket choice. Those were
 reasonable implementation defaults, not an exact BorealHDR AE emulator match;
@@ -328,8 +362,12 @@ are excluded before AE starts, so a missing frame cannot shift later cycles.
 The generated `exposure.yaml` records the per-frame requested times. For an
 **exact rerun**, reuse the prepared sequence and its saved run configuration:
 ordinary `--exposure-yaml` preparation can differ because AE meters before
-demosaicing and excludes incomplete cycles. `ae_trace.csv` records the measured mean, target error, applied and next
-exposure (ms), stops relative to 4 ms (blank at zero), and source bracket.
+demosaicing and excludes incomplete cycles. `ae_trace.csv` records measured
+mean, the classical-50 target difference (diagnostic only for Zhang/Kim),
+applied and next exposure (ms), stops relative to 4 ms (blank at zero), and
+source bracket. Zhang/Kim traces also record method, controller metric, and
+which control branch was used; `borealhdr.json` and `run.json` record the
+method, pinned-source provenance, and Kim GP seed.
 Both files, `exposure.csv`, and controller provenance are copied into each run
 directory. AE preparations have their own fingerprinted cache.
 

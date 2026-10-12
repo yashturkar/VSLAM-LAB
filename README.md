@@ -360,6 +360,13 @@ pixi run -e vslamlab borealhdr run backpack_2023-04-20-14-07-00 --slam orbslam2 
 # Pinned BorealHDR classical-50 auto-exposure baseline:
 pixi run -e vslamlab borealhdr run backpack_2023-04-20-14-07-00 --slam orbslam2 --mode stereo --shared-only --ae
 
+# Pinned BorealHDR Zhang or Kim controller (separate prepared-image caches):
+pixi run -e vslamlab borealhdr run backpack_2023-04-20-14-07-00 --slam pycuvslam --mode stereo --shared-only --ae zhang
+pixi run -e vslamlab borealhdr run backpack_2023-04-20-14-07-00 --slam pycuvslam --mode stereo --shared-only --ae kim
+
+# Kim can jump to a search-bound exposure on saturated images; see the
+# interpretation caveat in docs/BorealHDR.md and inspect ae_trace.csv.
+
 # GUI demo plus exposure plot synchronized to prepared left-frame reads:
 pixi run -e vslamlab borealhdr demo backpack_2023-04-20-14-07-00 --slam orbslam3 --mode stereo --shared-only --ae --ae-plot
 

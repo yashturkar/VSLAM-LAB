@@ -24,6 +24,7 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 from Utilities.extract_lightning_mcap import write_calibration, write_csv  # noqa: E402
+from Utilities.boreal_ae_controllers import KimController, ZhangController, PINNED_SOURCE, KIM_GP_SEED
 
 DEFAULT_DATA = Path('/mnt/share/local/eph/BorealHDR')
 DEFAULT_CODE = Path('/home/yashturkar/Workspace/TFR24_BorealHDR/BorealHDR')
@@ -33,6 +34,24 @@ AE50_SOURCE = 'norlab-ulaval/BorealHDR@042befac24efb256ab2a3c787c758a88a490c290:
 AE50_TARGET = 2048
 AE50_GAIN = 0.002
 AE50_THRESHOLD = 15
+AE_METHODS = ('classical', 'zhang', 'kim')
+
+
+def ae_method_name(ae):
+    """Keep ``prepare(..., ae=True)`` and bare ``--ae`` as classical-50."""
+    method = 'classical' if ae is True else ae or None
+    if method is not None and method not in AE_METHODS:
+        raise ValueError(f'Unknown AE method: {method}')
+    return method
+
+
+def ae_source(method):
+    if method is None:
+        return None
+    if method == 'classical':
+        return AE50_SOURCE
+    name = {'zhang': 'Metric_Zhang', 'kim': 'Metric_Kim'}
+    return f'{PINNED_SOURCE}:{name[method]}' if method else None
 
 
 class ExposureLoader(yaml.SafeLoader):
@@ -218,6 +237,7 @@ def discover(root):
 
 
 def prepare(root, name, code, output, exposure_yaml=None, ae=False):
+    ae = ae_method_name(ae)
     if ae and exposure_yaml is not None:
         raise ValueError('--ae and --exposure-yaml are mutually exclusive')
     if name not in discover(root):
@@ -253,15 +273,20 @@ def prepare(root, name, code, output, exposure_yaml=None, ae=False):
                      for p in sorted((source / f'camera_{side}' / str(bracket)).glob('*.png'))] if ae else
                     [p for stamp in stamps for p in (left[stamp], right[stamp])])
     fingerprint_input = {
-        'version': 4 if ae else 2, 'source': str(source), 'calibration': camera_configs,
+        'version': 4 if ae == 'classical' else 5 if ae else 2,
+        'source': str(source), 'calibration': camera_configs,
         'exposures': exposures, 'curve': curve.tolist() if needs_curve else None,
         'files': [(str(p), p.stat().st_size, p.stat().st_mtime_ns) for p in source_files],
     }
     if ae:
-        fingerprint_input['ae'] = {'source': AE50_SOURCE, 'target': AE50_TARGET,
+        fingerprint_input['ae'] = {'source': ae_source(ae), 'target': AE50_TARGET,
                                    'gain': AE50_GAIN, 'threshold': AE50_THRESHOLD,
                                    'initial_ms': 4., 'selection': 'closer_least_sat_per_camera',
                                    'response_curve': 'pcalib_inside1.txt'}
+        if ae == 'kim':
+            fingerprint_input['ae']['gp_seed'] = KIM_GP_SEED
+        if ae == 'zhang':
+            fingerprint_input['ae']['weight_size'] = 'actual_bayer_pixels'
     fingerprint = hashlib.sha256(json.dumps(fingerprint_input, sort_keys=True).encode()).hexdigest()
     variant = output / 'exposure_variants' / fingerprint if exposure_yaml or ae else output
     sequence = variant / 'sequences' / name
@@ -310,6 +335,7 @@ def prepare(root, name, code, output, exposure_yaml=None, ae=False):
     if ae:
         rows = []
         current_exposure = 4.
+        controller = KimController() if ae == 'kim' else ZhangController(curve) if ae == 'zhang' else None
     for i in range(len(stamps)):
         if ae:
             selected = []
@@ -343,7 +369,12 @@ def prepare(root, name, code, output, exposure_yaml=None, ae=False):
                 raw = convert_exposure(raw_images[index], rows[i][1], bracket, curve,
                                        force_curve=True)
                 if index == 0:
-                    mean, next_exposure = ae50_next_exposure(raw, current_exposure)
+                    if controller is None:
+                        mean, next_exposure = ae50_next_exposure(raw, current_exposure)
+                        metric, branch = mean, 'classical'
+                    else:
+                        next_exposure, metric, branch = controller.update(raw, current_exposure)
+                        mean = float(np.mean(cv2.cvtColor(raw, cv2.COLOR_BAYER_RG2GRAY)))
                 gray = cv2.cvtColor(raw, cv2.COLOR_BAYER_RG2GRAY)
             else:
                 raw = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
@@ -357,9 +388,12 @@ def prepare(root, name, code, output, exposure_yaml=None, ae=False):
             if not cv2.imwrite(str(sequence / f'rgb_{index}' / f'{output_stamp}.png'), rectified):
                 raise OSError(f'Cannot save rectified frame {output_stamp}')
         if ae:
-            ae_trace.append((i, stamp, current_exposure,
-                             math.log2(current_exposure / 4.) if current_exposure > 0 else '',
-                             mean, mean - AE50_TARGET, next_exposure, left_bracket, right_bracket))
+            trace_row = (i, stamp, current_exposure,
+                         math.log2(current_exposure / 4.) if current_exposure > 0 else '',
+                         mean, mean - AE50_TARGET, next_exposure, left_bracket, right_bracket)
+            if ae != 'classical':
+                trace_row += (ae, metric, branch)
+            ae_trace.append(trace_row)
             current_exposure = next_exposure
         if i % 50 == 0 or i == len(stamps) - 1 or rows[i][1:3] != rows[i - 1][1:3]:
             bracket_note = (f'left source bracket {rows[i][2]:g} ms; '
@@ -383,13 +417,18 @@ def prepare(root, name, code, output, exposure_yaml=None, ae=False):
     if exposure_yaml or ae:
         (sequence / 'exposure.yaml').write_text(yaml.safe_dump({i: row[1] for i, row in enumerate(rows)}))
     if ae:
-        write_csv(sequence / 'ae_trace.csv', ['frame_num', 'timestamp_ns', 'exposure_ms', 'stops_vs_4ms',
-                  'mean_dn', 'error_dn', 'next_exposure_ms', 'source_bracket_ms',
-                  'right_source_bracket_ms'], ae_trace)
+        trace_columns = ['frame_num', 'timestamp_ns', 'exposure_ms', 'stops_vs_4ms',
+                         'mean_dn', 'error_dn', 'next_exposure_ms', 'source_bracket_ms',
+                         'right_source_bracket_ms']
+        if ae != 'classical':
+            trace_columns += ['ae_method', 'controller_metric', 'controller_branch']
+        write_csv(sequence / 'ae_trace.csv', trace_columns, ae_trace)
     marker.write_text(json.dumps({'fingerprint': fingerprint, 'source': str(source),
         'calibration': str(calibration), 'exposure_ms': None if exposure_yaml or ae else 4,
-        'exposure_mode': 'ae50' if ae else ('scheduled' if exposure_yaml else 'fixed'),
-        'ae_controller': AE50_SOURCE if ae else None, 'pairs': len(stamps),
+        'exposure_mode': 'ae50' if ae == 'classical' else f'ae_{ae}' if ae else
+        ('scheduled' if exposure_yaml else 'fixed'),
+        'ae_method': ae, 'ae_controller': ae_source(ae), 'pairs': len(stamps),
+        'ae_gp_seed': KIM_GP_SEED if ae == 'kim' else None,
         'ae_response_curve': 'pcalib_inside1.txt' if ae else None,
         'ae_bracket_selection': 'closer_least_sat_per_camera' if ae else None,
         'unmatched_left': unmatched_left, 'unmatched_right': unmatched_right,
@@ -429,7 +468,8 @@ def main():
     parser.add_argument('--shared-only', action='store_true',
                         help='Require a validated shared reference; never generate FAST-LIO locally')
     parser.add_argument('--exposure-yaml', type=Path, help='Zero-based frame: exposure_ms mapping; hold until next entry')
-    parser.add_argument('--ae', action='store_true', help='Use BorealHDR classical-50 auto-exposure')
+    parser.add_argument('--ae', nargs='?', const='classical', choices=AE_METHODS,
+                        help='BorealHDR AE method: classical (default), zhang, or kim')
     parser.add_argument('--ae-plot', action='store_true',
                         help='Show frame-synchronized exposure plot alongside demo --ae')
     args = parser.parse_args()
@@ -459,7 +499,7 @@ def main():
             args.root / args.sequence, args.output / 'fastlio_reference',
             args.reference_root, shared_only=True)
     sequence = prepare(args.root, args.sequence, args.code, args.output, args.exposure_yaml,
-                       ae=True) if args.ae else prepare(args.root, args.sequence, args.code, args.output, args.exposure_yaml)
+                       ae=args.ae)
     if args.action == 'prepare':
         return
     season = 'april_2023' if args.sequence.startswith('backpack_2023-04-') else 'september_2023'
@@ -485,8 +525,10 @@ def main():
     print(f'Configuration: {config}', flush=True)
     state = {'sequence': args.sequence, 'baseline': args.slam, 'mode': args.mode,
              'exposure_ms': None if args.exposure_yaml or args.ae else 4,
-             'exposure_mode': 'ae50' if args.ae else ('scheduled' if args.exposure_yaml else 'fixed'),
-             'ae_controller': AE50_SOURCE if args.ae else None,
+             'exposure_mode': 'ae50' if args.ae == 'classical' else f'ae_{args.ae}' if args.ae else
+             ('scheduled' if args.exposure_yaml else 'fixed'),
+             'ae_method': args.ae, 'ae_controller': ae_source(args.ae),
+             'ae_gp_seed': KIM_GP_SEED if args.ae == 'kim' else None,
              'ae_response_curve': 'pcalib_inside1.txt' if args.ae else None,
              'ae_bracket_selection': 'closer_least_sat_per_camera' if args.ae else None,
              'prepared_sequence': str(sequence), 'source': str(args.root / args.sequence),
