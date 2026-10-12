@@ -357,6 +357,12 @@ pixi run -e vslamlab borealhdr list
 # Headless stereo with the default recorded 4 ms exposure
 pixi run -e vslamlab borealhdr run backpack_2023-04-20-14-07-00 --slam orbslam2 --mode stereo --shared-only
 
+# Pinned BorealHDR classical-50 auto-exposure baseline:
+pixi run -e vslamlab borealhdr run backpack_2023-04-20-14-07-00 --slam orbslam2 --mode stereo --shared-only --ae
+
+# GUI demo plus exposure plot synchronized to prepared left-frame reads:
+pixi run -e vslamlab borealhdr demo backpack_2023-04-20-14-07-00 --slam orbslam3 --mode stereo --shared-only --ae --ae-plot
+
 # Prepare images using the supplied varying-exposure schedule
 pixi run -e vslamlab borealhdr prepare backpack_2023-04-20-09-29-14 \
   --exposure-yaml configs/borealhdr_exposure_demo.yaml
@@ -399,7 +405,9 @@ are preferred; the runner reads but never writes them. Use
 `pixi run -e vslamlab boreal-reference-batch --all --check-only` to audit them.
 Use `--shared-only` with `borealhdr run/demo` to require a published reference
 instead of generating FAST-LIO for a missing sequence.
-Scheduled runs also save their resolved exposure YAML and per-frame exposure CSV.
+Scheduled and AE runs save their resolved exposure YAML and per-frame exposure
+CSV. AE runs also save a metering/controller trace; see the
+[AE50 guide](docs/BorealHDR.md#ae50-automatic-exposure).
 The resulting reference is locally estimated, not surveyed ground truth. Check
 temporal completion alongside RMSE. See [BorealHDR details](docs/BorealHDR.md)
 for FAST-LIO setup, cache reuse, path overrides, reference provenance, and limitations.

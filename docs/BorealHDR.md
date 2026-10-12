@@ -186,7 +186,7 @@ option selects the recorded 4 ms bracket for every frame.
 | Document | One top-level YAML mapping; no `exposures:` wrapper, list, or separate camera sections. |
 | Key | A unique, unquoted integer frame number, starting at zero. Strings (`"0"`), fractional keys, booleans, and duplicate keys are rejected. |
 | Frame bounds | For a sequence with `N` synchronized cycles, every key must satisfy `0 <= frame_num < N`. An entry for frame `0` is required. |
-| Value | A finite positive YAML number in **milliseconds**, e.g. `4`, `8.0`, or `6.5`. Strings, booleans, zero, negative values, NaN and infinity are rejected. |
+| Value | A finite nonnegative YAML number in **milliseconds**, e.g. `4`, `8.0`, or `6.5`. Strings, booleans, negative values, NaN and infinity are rejected. Zero supports replaying a possible AE50 output and renders a black frame. |
 | Application | The specified exposure starts at the keyed frame, inclusive, and holds until the next keyed frame. The last setting holds to the end. There is no interpolation between entries. |
 | Ordering | Keys may appear in any order; frame numbers determine application order. Ascending order is recommended for readability. |
 | Stereo | One requested exposure applies to both cameras. Per-camera exposure settings are not supported. |
@@ -216,9 +216,10 @@ Sparse schedules are convenient for intervals; a dense mapping is supported too:
 ```
 
 Recorded exposures are **1, 2, 4, 8, 16, and 32 ms**. Requests matching those values
-use the corresponding recorded images. Other positive values, including values
+use the corresponding recorded images. Other nonnegative values, including values
 outside that recorded range, are emulated from the nearest bracket in log
-exposure using the calibrated camera response curve. Saturation is clipped;
+exposure using the calibrated camera response curve. Zero uses the 1 ms source
+bracket and renders black. Saturation is clipped;
 emulation does not recover lost detail or reproduce changes in motion blur.
 Choosing a different recorded bracket also changes the actual acquisition time
 within the cycle. See the processing details below.
@@ -259,6 +260,84 @@ change, every 50 pairs, and at completion. Frame numbers are zero-based. Cached
 preparations print the input schedule by frame range before SLAM starts; these
 are input summaries, not live SLAM playback progress.
 
+### AE50 automatic exposure
+
+`--ae` runs the **classical-50** controller from the
+[pinned BorealHDR source](https://github.com/norlab-ulaval/BorealHDR/blob/042befac24efb256ab2a3c787c758a88a490c290/scripts/classes/class_auto_exposure_methods.py#L117-L159).
+It works with `prepare`, `run`, and `demo`, but cannot be combined with
+`--exposure-yaml`:
+
+```bash
+pixi run -e vslamlab borealhdr prepare backpack_2023-04-20-14-07-00 --ae
+pixi run -e vslamlab borealhdr run backpack_2023-04-20-14-07-00 --slam orbslam2 --mode stereo --shared-only --ae
+pixi run -e vslamlab borealhdr demo backpack_2023-04-20-14-07-00 --slam orbslam3 --mode stereo --shared-only --ae
+```
+
+Add `--ae-plot` to a `demo --ae` command to open a second window with the
+per-frame exposure curve and a cursor on the frame currently being loaded by
+ORB-SLAM2 or ORB-SLAM3:
+
+```bash
+pixi run -e vslamlab borealhdr demo backpack_2023-04-20-14-07-00 --slam orbslam3 --mode stereo --shared-only --ae --ae-plot
+```
+
+The plot watches opens of the prepared `rgb_0` PNGs and maps each filename to
+its exact exposure in `exposure.csv`; it does not estimate progress from a
+timer or alter SLAM inputs. It marks the **image-read event**, not the exact
+instant `TrackStereo` processes the image. Avoid opening those PNGs in another
+application during the demo, because Linux inotify cannot identify which
+process opened a file. The watcher starts before SLAM and closes when the run
+ends. It requires Linux and a graphical desktop. To attach to an already
+running AE demo, run `pixi run -e vslamlab python
+Utilities/boreal_ae_plot.py <prepared_sequence_path>`; it can observe only
+frames opened after it starts.
+
+Frame 0 starts at 4 ms. Both cameras use the same exposure at each frame.
+AE50 converts the emulated **left Bayer image** to 12-bit gray with
+`COLOR_BAYER_RG2GRAY` and meters its mean. The target is 2048 digital counts
+(50% of 4096); errors strictly below 15 counts hold exposure. Otherwise the
+next frame uses the pinned controller's `abs(current_ms + 0.002 ×
+(2048 − measured_mean))`. There is **no controller clamp**: requested times can
+exceed the 1–32 ms recorded bracket range or equal zero. The image renderer
+uses an available bracket and the response curve to emulate that time; zero
+renders black. Exposures are controlled in milliseconds, not stops.
+
+For `--ae`, image emulation now also follows the pinned BorealHDR
+`Image_Emulator`: it uses `calibration_files/pcalib_inside1.txt` and selects
+the first recorded bracket at or above the requested time, falling back to the
+previous bracket if that candidate has more zero/4094-valued pixels. Above
+32 ms it uses the 32 ms bracket. This selection is made **separately for left
+and right**, as in the upstream code, so the two source images in a stereo pair
+can have different exposure brackets and acquisition timestamps. The requested
+exposure time remains the same for both cameras; `rgb.csv`, `exposure.csv`, and
+`ae_trace.csv` record the selected sources. Fixed and YAML-scheduled runs keep
+the harness's previous `pcalib_forest2024.txt`/nearest-log behavior.
+
+The earlier AE implementation reproduced the pinned **controller** but used
+the harness's existing forest CRF and nearest-log bracket choice. Those were
+reasonable implementation defaults, not an exact BorealHDR AE emulator match;
+old AE image variants and results should not be cited as such. The new AE
+fingerprint prevents old prepared images from being silently reused. This
+still does not guarantee bit-for-bit agreement with BorealHDR's complete
+upstream pipeline: this harness aligns complete stereo capture cycles and
+rectifies/exports images for VSLAM-LAB. AE is
+computed sequentially while preparing the dataset, then SLAM runs on those
+static images; it is not feedback from SLAM or a live camera. Brackets are
+aligned to the 4 ms capture-cycle timestamps; cycles missing any paired bracket
+are excluded before AE starts, so a missing frame cannot shift later cycles.
+The generated `exposure.yaml` records the per-frame requested times. For an
+**exact rerun**, reuse the prepared sequence and its saved run configuration:
+ordinary `--exposure-yaml` preparation can differ because AE meters before
+demosaicing and excludes incomplete cycles. `ae_trace.csv` records the measured mean, target error, applied and next
+exposure (ms), stops relative to 4 ms (blank at zero), and source bracket.
+Both files, `exposure.csv`, and controller provenance are copied into each run
+directory. AE preparations have their own fingerprinted cache.
+
+If the native SLAM process crashes, the command now stops before evaluation and
+reports its exit code/signal and log path. `run.json` records these details;
+any partial keyframe trajectory is retained for diagnosis, not treated as a
+valid evaluation result.
+
 Use `--mode mono` for a monocular baseline; stereo is the default. `--root`,
 `--code`, and `--output` override the paths above. `prepare` converts a sequence
 without running SLAM. Verified prepared frames are reused across methods and runs.
@@ -282,4 +361,4 @@ matrix. Source images are not changed.
 The inspected local recordings contain raw LiDAR, GNSS and IMU measurements but
 no supplied pose ground-truth trajectory. FAST-LIO generates a locally derived
 reference; its accuracy is not equivalent to surveyed ground truth or the authors'
-published lidar reference. Automatic exposure control is deferred.
+published lidar reference.
