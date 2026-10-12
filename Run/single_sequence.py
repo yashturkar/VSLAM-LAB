@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import inspect
 import os
+import signal
 import shutil
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -210,6 +211,26 @@ def _trajectory(run_folder: Path) -> Path:
     return trajectory
 
 
+class BaselineRunError(RuntimeError):
+    """A native baseline failed; its trajectory, if present, may be partial."""
+
+    def __init__(self, baseline: str, exit_code: int, log_file: Path,
+                 partial_trajectory: Path | None, pose_rows: int | None):
+        self.exit_code = exit_code
+        self.log_file = log_file
+        self.partial_trajectory = partial_trajectory
+        self.pose_rows = pose_rows
+        number = -exit_code if exit_code < 0 else exit_code - 128 if exit_code >= 128 else None
+        try:
+            self.signal_name = signal.Signals(number).name if number is not None else None
+        except ValueError:
+            self.signal_name = None
+        suffix = f" ({self.signal_name})" if self.signal_name else ""
+        partial = (f"; partial trajectory has {pose_rows} pose row(s): {partial_trajectory}"
+                   if partial_trajectory is not None else "; no trajectory was saved")
+        super().__init__(f"{baseline} exited with code {exit_code}{suffix}; see log: {log_file}{partial}")
+
+
 def _write_report(trajectory: Path, groundtruth: Path, output: Path, title: str) -> None:
     """Write a lightweight trajectory PDF without invoking the comparison pipeline."""
     import matplotlib.pyplot as plt
@@ -251,6 +272,19 @@ def run_single_baseline(config_yaml: str | Path, headless: bool = True) -> Path:
     print_msg(f"\n{SCRIPT_LABEL}", f"Running {config.baseline} on {config.name}")
     with headless_environment(headless):
         results = run_sequence(0, experiment, baseline, dataset, config.name)
+    exit_code = results.get("exit_code")
+    if exit_code is not None and exit_code != 0:
+        partial = run_folder / f"00000_{TRAJECTORY_FILE_NAME}.csv"
+        destination = None
+        pose_rows = None
+        if partial.is_file():
+            config.output_dir.mkdir(parents=True, exist_ok=True)
+            destination = config.output_dir / partial.name
+            shutil.copy2(partial, destination)
+            with partial.open(encoding="utf-8") as stream:
+                pose_rows = max(sum(1 for line in stream if line.strip()) - 1, 0)
+        log_file = Path(results.get("log_file") or run_folder / "system_output_00000.txt")
+        raise BaselineRunError(config.baseline, exit_code, log_file, destination, pose_rows)
     trajectory = _trajectory(run_folder)
     config.output_dir.mkdir(parents=True, exist_ok=True)
     destination = config.output_dir / trajectory.name

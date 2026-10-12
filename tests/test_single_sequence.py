@@ -1,17 +1,23 @@
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import cv2
 import numpy as np
 import pandas as pd
 
 from Datasets.dataset_files.dataset_lightning import LightningDataset
+from Baselines.BaselineVSLAMLAB import BaselineVSLAMLAB
+from Baselines.baseline_files.baseline_orbslam2 import ORBSLAM2_baseline
 from Run.single_sequence import (
+    BaselineRunError,
     SingleSequenceConfig,
     _trajectory,
     headless_environment,
     load_dataset,
+    run_single_baseline,
 )
 
 
@@ -55,6 +61,40 @@ class SingleSequenceTests(unittest.TestCase):
             (run_folder / "00000_KeyFrameTrajectory.csv").write_text("timestamp,x,y,z\n", encoding="utf-8")
             with self.assertRaisesRegex(RuntimeError, "empty trajectory"):
                 _trajectory(run_folder)
+
+    def test_native_exit_code_is_recorded_even_with_partial_trajectory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            (folder / '00000_KeyFrameTrajectory.csv').write_text('ts,x,y,z\n1,0,0,0\n')
+            baseline = ORBSLAM2_baseline()
+            with patch.object(BaselineVSLAMLAB, 'monitor_memory'):
+                result = baseline.execute('exit 139', 0, folder)
+            self.assertFalse(result['success'])
+            self.assertEqual(result['exit_code'], 139)
+            self.assertIn('139', result['comments'])
+            self.assertEqual(result['log_file'], str(folder / 'system_output_00000.txt'))
+
+    def test_crashed_baseline_reports_signal_before_evaluation_and_keeps_partial_csv(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_folder = root / 'runner'
+            run_folder.mkdir()
+            partial = run_folder / '00000_KeyFrameTrajectory.csv'
+            partial.write_text('ts,x,y,z\n1,0,0,0\n')
+            config = SimpleNamespace(baseline='orbslam3', name='example', output_dir=root / 'output')
+            result = {'success': False, 'exit_code': 139,
+                      'log_file': str(run_folder / 'system_output_00000.txt')}
+            with patch('Run.single_sequence._prepare', return_value=(config, None, None, None, run_folder)), \
+                 patch('Run.single_sequence.run_sequence', return_value=result):
+                with self.assertRaises(BaselineRunError) as caught:
+                    run_single_baseline(root / 'config.yaml', headless=False)
+            error = caught.exception
+            self.assertEqual(error.exit_code, 139)
+            self.assertEqual(error.signal_name, 'SIGSEGV')
+            self.assertEqual(error.pose_rows, 1)
+            self.assertIn('SIGSEGV', str(error))
+            self.assertTrue(error.partial_trajectory.is_file())
+            self.assertEqual(error.partial_trajectory.read_text(), partial.read_text())
 
     def test_lightning_fixture_is_prepared_without_copying_images(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -294,12 +294,19 @@ class BaselineVSLAMLAB(ABC):
             while not comment_queue.empty():
                 comments += comment_queue.get() + "\n"
 
+        exit_code = process.returncode
+        if exit_code != 0:
+            success_flag[0] = False
+            comments += f"Process exited with code {exit_code}. See {log_file_path}\n"
+
         if not (exp_folder / (str(exp_it).zfill(5) + f"_{TRAJECTORY_FILE_NAME}.csv")).exists():
             success_flag[0] = False
 
         return {
             "success": success_flag[0],
             "comments": comments,
+            "exit_code": exit_code,
+            "log_file": str(log_file_path),
             "ram": memory_stats.get('ram', 'N/A'),
             "swap": memory_stats.get('swap', 'N/A'),
             "gpu": memory_stats.get('gpu', 'N/A')
