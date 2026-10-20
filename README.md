@@ -438,10 +438,12 @@ pixi run -e vslamlab clid-relight run "$SEQUENCE" \
 
 Use `prepare` to render without SLAM or `demo` for a GUI run. Inputs remain
 read-only and variants/results default to `/mnt/share/local/eph/VSLAM/relighting`.
-Camera 0 is currently supported; stereo is intentionally blocked until synchronized
-camera-1 components exist. See the [CLID relighting guide](docs/CLIDRelighting.md)
-for the YAML specification, profiles, calibration compensation, caching, outputs,
-and complete commands.
+This older `clid-relight` component workflow supports camera 0 only; it blocks
+stereo when camera-1 components are unavailable. For release-2 RAW bags, the
+separate `clid-stereo` workflow prepares and relights synchronized left/right
+images using the [IllumiNet stereo local-output branch](https://github.com/yashturkar/IllumiNet/tree/feat/clid-stereo-local-output).
+See the [CLID relighting guide](docs/CLIDRelighting.md) for both workflows,
+their YAML schedules, calibration, storage, and complete commands.
 
 ### Shared runtime storage
 
