@@ -141,6 +141,17 @@ its exact paired-RAW frame count; frame 0 is required, and values hold until
 the next specified frame. The sample schedule above is for the 575-pair
 113through bag, not a universal length.
 
+For a smooth per-frame test on that bag, use
+[`configs/clid_stereo_sine_113through.yaml`](../configs/clid_stereo_sine_113through.yaml).
+It specifies all 575 frames: commanded light follows `0.5 + 0.4 sin(2πn/115 + 0.19)`
+and exposure follows `1.25 cos(2πn/115 + 0.47)` EV, for five cycles. The two
+controls use distinct phases; each is independently applied to both cameras.
+
+```bash
+pixi run -e vslamlab clid-stereo demo "$BAG" \
+  --schedule-yaml configs/clid_stereo_sine_113through.yaml --slam orbslam3
+```
+
 The extracted `groundtruth.csv` is bag odometry in the body frame; the bag has
 no surveyed camera-frame GT transform. Evaluation is therefore an odometry
 reference, not an absolute GT accuracy claim. CLID release-2 sequence data
