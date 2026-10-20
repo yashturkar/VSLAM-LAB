@@ -1,0 +1,8 @@
+# Zero-based paired RAW frame index. Each setting holds until the next key.
+# Sized for 113through-3_seq001 (575 exact RAW stereo pairs).
+0: {light: 0.5, exposure_ev: 0}
+100: {light: 0.2, exposure_ev: -1}
+200: {light: 0.8, exposure_ev: 0}
+300: {light: 1.0, exposure_ev: 1}
+400: {light: 0.0, exposure_ev: 2}
+500: {light: 0.5, exposure_ev: 0}

@@ -121,9 +121,9 @@ BAG=/mnt/share/nas/eph/clid-v2-sequences/113through/113through-3_20260826_214558
 
 pixi run -e vslamlab clid-stereo check "$BAG"
 pixi run -e vslamlab clid-stereo prepare "$BAG" \
-  --schedule-yaml configs/clid_relight_demo.yaml
+  --schedule-yaml configs/clid_stereo_demo_113through.yaml
 pixi run -e vslamlab clid-stereo run "$BAG" \
-  --schedule-yaml configs/clid_relight_demo.yaml --slam orbslam3
+  --schedule-yaml configs/clid_stereo_demo_113through.yaml --slam orbslam3
 ```
 
 `prepare` does not launch SLAM. `run` launches headless stereo SLAM and the
@@ -136,6 +136,10 @@ partial export. Relit variants are content-addressed by schedule and inputs.
 The printed prepared sequence path contains `rgb_0`, `rgb_1`, exact-pair
 `rgb.csv`, scaled `calibration.yaml`, `groundtruth.csv`, `relight.csv`, and
 `relight.json`.
+For another sequence, provide a schedule whose largest frame index is below
+its exact paired-RAW frame count; frame 0 is required, and values hold until
+the next specified frame. The sample schedule above is for the 575-pair
+113through bag, not a universal length.
 
 The extracted `groundtruth.csv` is bag odometry in the body frame; the bag has
 no surveyed camera-frame GT transform. Evaluation is therefore an odometry
