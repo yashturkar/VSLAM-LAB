@@ -73,6 +73,7 @@ borealhdr-audit = "python Utilities/borealhdr_audit.py"
 boreal-fastlio = "python Utilities/boreal_fastlio.py"
 boreal-reference-batch = "python Utilities/boreal_reference_batch.py"
 clid-relight = "python Utilities/clid_relight.py"
+clid-stereo = "python Utilities/clid_stereo_pipeline.py"
 vslamlab.cmd = "python vslamlab_gui.py vslamlab {{ exp_yaml }} {{ overwrite }}"
 vslamlab.args = [
   { "arg" = "exp_yaml", "default" = "configs/exp_vslamlab.yaml" },

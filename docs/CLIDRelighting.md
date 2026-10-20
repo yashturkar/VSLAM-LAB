@@ -86,10 +86,59 @@ Each variant includes `relight.csv`, a dense resolved `schedule.yaml`, and
 the trajectory, Sim(3)-aligned monocular EVO metrics, temporal completion, PDF,
 configuration, and run state.
 
-## Current stereo blocker
+## Legacy V6.3 mono command limitation
 
 Only camera-0 components exist. `--mode stereo` deliberately fails instead of
 mixing synthesized left frames with recorded right frames. Stereo support is
 complete only after synchronized `clid_components_1` files and their manifest
 contract are available; the same schedule must then be applied to both cameras
 while preserving the calibrated baseline.
+
+## V6.3.4 release-2 stereo pipeline
+
+The older `clid-relight` command above remains the V6.3 mono consumer. For a
+processed CLID sequence captured by the two release-2 camera serials, use the
+separate `clid-stereo` pipeline. It reads BayerRG16 RAW and exact per-camera
+metadata via IllumiNet, then intersects both coefficient timestamp sets with
+the VSLAM-LAB stereo preview pairs. It never pairs by frame number. The same
+light/EV schedule is applied to both cameras, but each uses its own calibrated
+power response and Bayer response curve. The 400×640 packed coefficients are
+quantized to float16 in memory before relighting, demosaiced to 1280×800,
+rectified, and paired with a calibration scaled from the bag's CameraInfo.
+There is no per-camera or per-frame display-exposure adjustment.
+
+Inputs are read-only, including a NAS bag and the published release artifacts.
+All outputs default to `/mnt/share/local/eph/VSLAM/clid_stereo`; override with
+`--local-root` for another local disk. The IllumiNet checkout must contain the
+release-2 tag plus the local-output fix (the development branch
+`feat/clid-stereo-local-output`), and `--illuminet-python` must point to its
+CUDA-capable runtime. The current defaults match this machine; other machines
+should pass `--illuminet`, `--illuminet-python`, `--artifacts`, and `--local-root`.
+
+```bash
+BAG=/mnt/share/nas/eph/clid-v2-sequences/113through/113through-3_20260826_214558/113through-3_seq001_20260826_214616_889091
+
+pixi run -e vslamlab clid-stereo check "$BAG"
+pixi run -e vslamlab clid-stereo prepare "$BAG" \
+  --schedule-yaml configs/clid_relight_demo.yaml
+pixi run -e vslamlab clid-stereo run "$BAG" \
+  --schedule-yaml configs/clid_relight_demo.yaml --slam orbslam3
+```
+
+`prepare` does not launch SLAM. `run` launches headless stereo SLAM and the
+usual VSLAM-LAB evaluation; `demo` launches the viewer. `check`/`status` show
+missing, partial/stale, or ready base extraction and inference. Complete stages
+are verified and skipped. Inference writes fresh immutable coefficient/review
+directories; if it fails partway, the pipeline preserves them for inspection
+and refuses to overwrite them. Choose a fresh local root after diagnosing a
+partial export. Relit variants are content-addressed by schedule and inputs.
+The printed prepared sequence path contains `rgb_0`, `rgb_1`, exact-pair
+`rgb.csv`, scaled `calibration.yaml`, `groundtruth.csv`, `relight.csv`, and
+`relight.json`.
+
+The extracted `groundtruth.csv` is bag odometry in the body frame; the bag has
+no surveyed camera-frame GT transform. Evaluation is therefore an odometry
+reference, not an absolute GT accuracy claim. CLID release-2 sequence data
+also have no matched relighting-image GT. The published model's ambient-only
+recovery can retain active-light leakage, so P=0 appearance must not be judged
+from aggregate dark-pixel-dominated metrics alone.
