@@ -3,13 +3,14 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
 
 from Utilities.clid_stereo_pipeline import (
-    local_destination, prepare_variant, read_component, render, rgb_pairs, stereo_maps,
-    validate_coefficients,
+    index_source, local_destination, paired_timestamps, prepare_variant, read_component,
+    render, rgb_pairs, stereo_maps, validate_base, validate_coefficients,
 )
 from Utilities.clid_relight import sha256_file
 
@@ -33,6 +34,43 @@ class StereoPipelineTests(unittest.TestCase):
             file.write_text(text)
             with self.assertRaisesRegex(ValueError, 'Non-synchronous'):
                 rgb_pairs(file)
+
+    def test_raw_pair_index_requires_increasing_integer_timestamps(self):
+        with tempfile.TemporaryDirectory() as directory:
+            index = Path(directory) / 'pairing.csv'
+            index.write_text('timestamp_ns\n100\n200\n300\n')
+            self.assertEqual(paired_timestamps(index), [100, 200, 300])
+            index.write_text('timestamp_ns\n100\n300\n200\n')
+            with self.assertRaises(ValueError):
+                paired_timestamps(index)
+
+    def test_index_source_reads_raw_headers_and_odometry_without_previews(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bag = root / 'bag.mcap'
+            bag.write_bytes(b'fake')
+            pose = SimpleNamespace(position=SimpleNamespace(x=1, y=2, z=3),
+                                   orientation=SimpleNamespace(x=0, y=0, z=0, w=1))
+            records = []
+            for stamp in (100_000_000, 200_000_000, 300_000_000):
+                message = SimpleNamespace(header=SimpleNamespace(stamp=SimpleNamespace(
+                    sec=0, nanosec=stamp)), pose=SimpleNamespace(pose=pose))
+                records.append((None, SimpleNamespace(topic='/odometry'), None, message))
+            class Reader:
+                def iter_decoded_messages(self, topics):
+                    self_topics = set(topics)
+                    return (record for record in records if record[1].topic in self_topics)
+            identity = {'source': 'fake'}
+            frames = {side: {stamp: {} for stamp in (100_000_000, 200_000_000, 300_000_000)}
+                      for side in ('left', 'right')}
+            with patch('Utilities.clid_stereo_pipeline.make_reader', return_value=Reader()):
+                metadata = index_source(bag, root / 'base', identity, frames, 'coefficients-hash')
+            self.assertEqual(metadata['stereo_pairs'], 3)
+            self.assertAlmostEqual(metadata['fps'], 10)
+            self.assertEqual(validate_base(root / 'base', identity, 'coefficients-hash'),
+                             [100_000_000, 200_000_000, 300_000_000])
+            self.assertIsNone(validate_base(root / 'base', identity, 'wrong-hash'))
+            self.assertFalse((root / 'base' / 'rgb_0').exists())
 
     def test_local_destination_rejects_nas_and_source(self):
         source = Path('/mnt/share/nas/eph/sequence')
@@ -131,15 +169,7 @@ class StereoPipelineTests(unittest.TestCase):
             base, coefficients, artifacts = (root / name for name in ('base', 'coefficients', 'artifacts'))
             for folder in (base, coefficients, artifacts):
                 folder.mkdir()
-            for side in (0, 1):
-                (base / f'rgb_{side}').mkdir()
-                for stamp in (100, 200, 300):
-                    (base / f'rgb_{side}' / f'{stamp}.png').write_bytes(b'preview')
-            with (base / 'rgb.csv').open('w', newline='') as stream:
-                writer = csv.writer(stream)
-                writer.writerow(['ts_rgb_0 (ns)', 'path_rgb_0', 'ts_rgb_1 (ns)', 'path_rgb_1'])
-                for stamp in (100, 200, 300):
-                    writer.writerow([stamp, f'rgb_0/{stamp}.png', stamp, f'rgb_1/{stamp}.png'])
+            (base / 'pairing.csv').write_text('timestamp_ns\n100\n200\n300\n')
             (base / 'groundtruth.csv').write_text('ts (ns),tx (m),ty (m),tz (m),qx,qy,qz,qw\n')
             (base / 'extraction_metadata.json').write_text(json.dumps({'fps': 10}))
             (coefficients / 'stereo-manifest.json').write_text('{}')

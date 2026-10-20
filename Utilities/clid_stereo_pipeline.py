@@ -23,6 +23,8 @@ from typing import Any
 import cv2
 import numpy as np
 import yaml
+from mcap.reader import make_reader
+from mcap_ros2.decoder import DecoderFactory
 
 REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
@@ -32,7 +34,7 @@ from Utilities.clid_relight import (  # noqa: E402
     atomic_json, load_schedule, object_fingerprint, sha256_file, temporal_completion,
 )
 from Utilities.extract_lightning_mcap import (  # noqa: E402
-    camera_values, extract_sequence, read_camera_info, write_calibration, write_csv,
+    camera_values, read_camera_info, timestamp_ns, write_calibration, write_csv,
 )
 
 DEFAULT_ROOT = Path('/mnt/share/local/eph/VSLAM/clid_stereo')
@@ -42,6 +44,8 @@ DEFAULT_ARTIFACTS = Path('/mnt/share/nas/eph/clid-hdr-releases/clid-hdr-v634-rel
 SIDES = ('left', 'right')
 KEYS = ('A', 'F', 'C1', 'C2')
 INFO_TOPICS = ('/cam_sync/cam0/camera_info', '/cam_sync/cam1/camera_info')
+RAW_TOPICS = ('/cam_sync/cam0/image_raw', '/cam_sync/cam1/image_raw')
+ODOMETRY_TOPIC = '/odometry'
 RENDER_VERSION = 1
 
 
@@ -105,7 +109,56 @@ def rgb_pairs(path: Path) -> list[int]:
     return stamps
 
 
-def validate_base(sequence: Path, identity: dict[str, Any]) -> list[int] | None:
+def paired_timestamps(path: Path) -> list[int]:
+    with path.open(newline='', encoding='utf-8') as stream:
+        reader = csv.DictReader(stream)
+        if reader.fieldnames != ['timestamp_ns']:
+            raise ValueError(f'Invalid RAW pairing index: {path}')
+        stamps = [int(row['timestamp_ns']) for row in reader]
+    if len(stamps) < 3 or stamps != sorted(set(stamps)):
+        raise ValueError('Need at least three unique increasing RAW stereo timestamps')
+    return stamps
+
+
+def index_source(bag: Path, sequence: Path, identity: dict[str, Any],
+                 frames: dict[str, dict[int, dict[str, Any]]], coefficients_hash: str) -> dict[str, Any]:
+    """Pair verified inference RAW headers and read odometry; never decode previews."""
+    paired = sorted(set(frames['left']) & set(frames['right']))
+    if len(paired) < 3:
+        raise ValueError(f'Only {len(paired)} exact RAW stereo timestamp matches')
+    odometry = {}
+    with bag.open('rb') as stream:
+        reader = make_reader(stream, decoder_factories=[DecoderFactory()])
+        for _, _, _, message in reader.iter_decoded_messages(topics=[ODOMETRY_TOPIC]):
+            stamp = timestamp_ns(message)
+            pose = message.pose.pose
+            odometry.setdefault(stamp, [stamp, pose.position.x, pose.position.y, pose.position.z,
+                                         pose.orientation.x, pose.orientation.y, pose.orientation.z,
+                                         pose.orientation.w])
+            if len(odometry) % 500 == 0:
+                print(f'Odometry index: {len(odometry)} poses', flush=True)
+    if not odometry:
+        raise ValueError('No odometry messages in source bag')
+    intervals = np.diff(np.asarray(paired, np.int64)) / 1e9
+    fps = float(1 / np.median(intervals[intervals > 0]))
+    sequence.mkdir(parents=True, exist_ok=True)
+    write_csv(sequence / 'pairing.csv', ['timestamp_ns'], [[stamp] for stamp in paired])
+    write_csv(sequence / 'groundtruth.csv',
+              ['ts (ns)', 'tx (m)', 'ty (m)', 'tz (m)', 'qx', 'qy', 'qz', 'qw'],
+              [odometry[stamp] for stamp in sorted(odometry)])
+    metadata = {'schema_version': 1, 'status': 'complete', 'source_bag': str(bag),
+                'source_fingerprint': identity, 'coefficients_manifest_sha256': coefficients_hash,
+                'stereo_pairs': len(paired),
+                'left_raw_frames': len(frames['left']),
+                'right_raw_frames': len(frames['right']),
+                'odometry_poses': len(odometry), 'fps': fps,
+                'topics': {'left': RAW_TOPICS[0], 'right': RAW_TOPICS[1], 'odometry': ODOMETRY_TOPIC}}
+    atomic_json(sequence / 'extraction_metadata.json', metadata)
+    print(f'RAW index: {len(paired)} exact stereo pairs, {len(odometry)} odometry poses, {fps:.3f} Hz', flush=True)
+    return metadata
+
+
+def validate_base(sequence: Path, identity: dict[str, Any], coefficients_hash: str | None = None) -> list[int] | None:
     marker = sequence / 'extraction_metadata.json'
     if not marker.is_file():
         return None
@@ -113,10 +166,12 @@ def validate_base(sequence: Path, identity: dict[str, Any]) -> list[int] | None:
         metadata = json.loads(marker.read_text())
         if metadata.get('source_fingerprint') != identity or metadata.get('status') != 'complete':
             return None
-        stamps = rgb_pairs(sequence / 'rgb.csv')
+        if coefficients_hash is not None and metadata.get('coefficients_manifest_sha256') != coefficients_hash:
+            return None
+        stamps = paired_timestamps(sequence / 'pairing.csv')
         if len(stamps) != metadata.get('stereo_pairs'):
             return None
-        if not (sequence / 'calibration.yaml').is_file() or not (sequence / 'groundtruth.csv').is_file():
+        if not (sequence / 'groundtruth.csv').is_file():
             return None
         return stamps
     except (OSError, ValueError, KeyError, json.JSONDecodeError):
@@ -238,7 +293,7 @@ def stereo_maps(bag: Path, size: tuple[int, int]) -> tuple[dict[str, tuple[np.nd
 
 def prepare_variant(base: Path, bag: Path, coefficients: Path, frames: dict[str, dict[int, dict[str, Any]]],
                     artifacts: Path, release: dict[str, Any], schedule: Path, output: Path) -> Path:
-    stamps = [stamp for stamp in rgb_pairs(base / 'rgb.csv') if stamp in frames['left'] and stamp in frames['right']]
+    stamps = [stamp for stamp in paired_timestamps(base / 'pairing.csv') if stamp in frames['left'] and stamp in frames['right']]
     if len(stamps) < 3:
         raise ValueError('Fewer than three exact preview/left-RAW/right-RAW timestamp matches')
     dense = load_schedule(schedule, len(stamps))
@@ -366,10 +421,11 @@ def main() -> None:
     for name, digest in release['sha256'].items():
         if sha256_file(artifacts / name) != digest:
             raise ValueError(f'Release artifact checksum mismatch: {name}')
-    base_stamps = validate_base(base, identity)
     frames = validate_coefficients(coefficients, release, identity, sha256_file(manifest_path))
+    coefficients_hash = sha256_file(coefficients / 'stereo-manifest.json') if frames else None
+    base_stamps = validate_base(base, identity, coefficients_hash) if frames else None
     state = {'source': str(source), 'bag': str(bag), 'work': str(work),
-             'base': 'ready' if base_stamps else ('partial/stale' if base.exists() else 'missing'),
+             'raw_index': 'ready' if base_stamps else ('partial/stale' if base.exists() else 'missing'),
              'coefficients': 'ready' if frames else ('partial/stale' if coefficients.exists() else 'missing'),
              'exact_pairs': len(set(base_stamps or []) & set(frames['left']) & set(frames['right'])) if frames else 0}
     print(json.dumps(state, indent=2), flush=True)
@@ -381,16 +437,6 @@ def main() -> None:
     if not schedule.is_file():
         raise FileNotFoundError(schedule)
     work.mkdir(parents=True, exist_ok=True)
-    if base_stamps is None:
-        if base.exists():
-            raise RuntimeError(f'Base extraction is partial/stale; inspect before replacing: {base}')
-        print('Base extraction: starting', flush=True)
-        extract_sequence(bag, base, source_fingerprint=identity)
-        base_stamps = validate_base(base, identity)
-        if base_stamps is None:
-            raise RuntimeError('Base extraction did not validate')
-    else:
-        print(f'Base extraction: SKIP (verified) {len(base_stamps)} pairs', flush=True)
     if frames is None:
         if coefficients.exists() or review.exists():
             raise RuntimeError(f'Inference is partial/stale; preserved for inspection: {coefficients}, {review}')
@@ -403,8 +449,19 @@ def main() -> None:
         frames = validate_coefficients(coefficients, release, identity, sha256_file(manifest_path))
         if frames is None:
             raise RuntimeError(f'Inference output failed validation: {coefficients}')
+        coefficients_hash = sha256_file(coefficients / 'stereo-manifest.json')
     else:
         print(f'Stereo inference: SKIP (verified) {len(frames["left"])} left, {len(frames["right"])} right', flush=True)
+    if base_stamps is None:
+        if base.exists():
+            raise RuntimeError(f'RAW/odometry index is partial/stale; inspect before replacing: {base}')
+        print('RAW/odometry indexing: starting from verified inference timestamps (no preview images)', flush=True)
+        index_source(bag, base, identity, frames, coefficients_hash)
+        base_stamps = validate_base(base, identity, coefficients_hash)
+        if base_stamps is None:
+            raise RuntimeError('RAW/odometry index did not validate')
+    else:
+        print(f'RAW/odometry index: SKIP (verified) {len(base_stamps)} pairs', flush=True)
     prepared = prepare_variant(base, bag, coefficients, frames, artifacts, release, schedule, work)
     print(f'Prepared {len(rgb_pairs(prepared / "rgb.csv"))} exact stereo pairs', flush=True)
     if args.action in ('run', 'demo'):

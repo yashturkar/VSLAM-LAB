@@ -98,9 +98,10 @@ while preserving the calibrated baseline.
 
 The older `clid-relight` command above remains the V6.3 mono consumer. For a
 processed CLID sequence captured by the two release-2 camera serials, use the
-separate `clid-stereo` pipeline. It reads BayerRG16 RAW and exact per-camera
-metadata via IllumiNet, then intersects both coefficient timestamp sets with
-the VSLAM-LAB stereo preview pairs. It never pairs by frame number. The same
+separate `clid-stereo` pipeline. It runs IllumiNet inference on each camera's
+BayerRG16 RAW and exact metadata, pairs the verified coefficient manifests by
+their RAW header timestamps, and scans bag odometry without extracting preview
+images. It never pairs by frame number. The same
 light/EV schedule is applied to both cameras, but each uses its own calibrated
 power response and Bayer response curve. The 400×640 packed coefficients are
 quantized to float16 in memory before relighting, demosaiced to 1280×800,
@@ -127,7 +128,7 @@ pixi run -e vslamlab clid-stereo run "$BAG" \
 
 `prepare` does not launch SLAM. `run` launches headless stereo SLAM and the
 usual VSLAM-LAB evaluation; `demo` launches the viewer. `check`/`status` show
-missing, partial/stale, or ready base extraction and inference. Complete stages
+missing, partial/stale, or ready RAW index and inference. Complete stages
 are verified and skipped. Inference writes fresh immutable coefficient/review
 directories; if it fails partway, the pipeline preserves them for inspection
 and refuses to overwrite them. Choose a fresh local root after diagnosing a
