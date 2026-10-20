@@ -13,6 +13,7 @@ import csv
 import json
 import math
 import os
+import select
 import shutil
 import subprocess
 import sys
@@ -362,7 +363,29 @@ def prepare_variant(base: Path, bag: Path, coefficients: Path, frames: dict[str,
     return destination
 
 
-def run_slam(prepared: Path, slam: str, headless: bool, output: Path) -> Path:
+def launch_control_plot(prepared: Path) -> subprocess.Popen[str]:
+    """Start the file-open plot before SLAM can read the first frame."""
+    if not os.environ.get('DISPLAY'):
+        raise RuntimeError('Live control plot requires an X display; use demo with DISPLAY set')
+    script = Path(__file__).with_name('clid_control_plot.py')
+    process = subprocess.Popen([sys.executable, str(script), str(prepared)],
+                               stdout=subprocess.PIPE, text=True)
+    try:
+        ready, _, _ = select.select([process.stdout], [], [], 10)
+        if not ready or process.stdout.readline().strip() != 'READY':
+            raise RuntimeError('CLID control plot did not start; check the graphical display')
+    except Exception:
+        if process.poll() is None:
+            process.terminate()
+            process.wait(timeout=3)
+        raise
+    process.stdout.close()
+    print('CLID control plot: watching prepared left-frame reads', flush=True)
+    return process
+
+
+def run_slam(prepared: Path, slam: str, headless: bool, output: Path,
+             control_plot: bool = False) -> Path:
     from Baselines.get_baseline import get_baseline, list_available_baselines
     from Run.single_sequence import evaluate_single_trajectory, run_single_baseline
     if slam not in list_available_baselines() or 'stereo' not in get_baseline(slam).modes:
@@ -376,8 +399,20 @@ def run_slam(prepared: Path, slam: str, headless: bool, output: Path) -> Path:
                     'output_dir': str(result)},
         'EVALUATION': {'max_time_difference_s': 0.02, 'fast_lio': {'enabled': False}},
     }, sort_keys=False))
-    trajectory = run_single_baseline(config, headless=headless)
-    evaluate_single_trajectory(config, trajectory)
+    plotter = None
+    try:
+        if control_plot:
+            plotter = launch_control_plot(prepared)
+        trajectory = run_single_baseline(config, headless=headless)
+        evaluate_single_trajectory(config, trajectory)
+    finally:
+        if plotter is not None and plotter.poll() is None:
+            plotter.terminate()
+            try:
+                plotter.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                plotter.kill()
+                plotter.wait()
     temporal = temporal_completion(trajectory, prepared / 'groundtruth.csv')
     atomic_json(result / 'clid_run.json', {'prepared': str(prepared), 'trajectory': str(trajectory),
                                            'temporal': temporal, 'slam': slam, 'mode': 'stereo'})
@@ -395,7 +430,11 @@ def main() -> None:
     parser.add_argument('--illuminet-python', type=Path, default=DEFAULT_PYTHON)
     parser.add_argument('--artifacts', type=Path, default=DEFAULT_ARTIFACTS)
     parser.add_argument('--slam', default='orbslam3')
+    parser.add_argument('--control-plot', action='store_true',
+                        help='Show live commanded light and exposure EV during demo')
     args = parser.parse_args()
+    if args.control_plot and args.action != 'demo':
+        parser.error('--control-plot requires demo')
     source = args.source.expanduser().resolve()
     bag = source_bag(source)
     output = local_destination(args.local_root, source)
@@ -465,7 +504,8 @@ def main() -> None:
     prepared = prepare_variant(base, bag, coefficients, frames, artifacts, release, schedule, work)
     print(f'Prepared {len(rgb_pairs(prepared / "rgb.csv"))} exact stereo pairs', flush=True)
     if args.action in ('run', 'demo'):
-        run_slam(prepared, args.slam, headless=args.action == 'run', output=work)
+        run_slam(prepared, args.slam, headless=args.action == 'run', output=work,
+                 control_plot=args.control_plot)
 
 
 if __name__ == '__main__':

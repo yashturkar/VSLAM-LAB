@@ -149,8 +149,16 @@ controls use distinct phases; each is independently applied to both cameras.
 
 ```bash
 pixi run -e vslamlab clid-stereo demo "$BAG" \
-  --schedule-yaml configs/clid_stereo_sine_113through.yaml --slam orbslam3
+  --schedule-yaml configs/clid_stereo_sine_113through.yaml --slam orbslam3 \
+  --control-plot
 ```
+
+`--control-plot` is available only with `demo` on Linux with an X display. It
+starts before SLAM and shows commanded light in `[0,1]` and exposure in EV on
+separate live traces, with the current left-frame marker and both cameras'
+effective-power values. Like the Boreal AE plot, its marker follows image-file
+opens; it does not prove that native SLAM processed every opened frame. The plot
+closes when SLAM exits and does not alter the prepared images or the run.
 
 The extracted `groundtruth.csv` is bag odometry in the body frame; the bag has
 no surveyed camera-frame GT transform. Evaluation is therefore an odometry
