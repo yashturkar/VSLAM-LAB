@@ -1,7 +1,10 @@
 import csv
+import io
 import json
+import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -9,13 +12,52 @@ from unittest.mock import patch
 import numpy as np
 
 from Utilities.clid_stereo_pipeline import (
-    index_source, local_destination, paired_timestamps, prepare_variant, read_component,
+    index_source, local_destination, main, paired_timestamps, prepare_variant, read_component,
     render, rgb_pairs, stereo_maps, validate_base, validate_coefficients,
 )
 from Utilities.clid_relight import sha256_file
 
 
 class StereoPipelineTests(unittest.TestCase):
+    def test_prepare_coefficients_needs_no_schedule_and_stops_before_rendering(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'source'
+            (source / 'research-bag').mkdir(parents=True)
+            (source / 'manifest.json').write_text('{}')
+            (source / 'research-bag' / 'bag.mcap').write_bytes(b'bag')
+            illuminet = root / 'illuminet'
+            (illuminet / 'releases' / 'clid-hdr-v634-release-2').mkdir(parents=True)
+            (illuminet / 'releases' / 'clid-hdr-v634-release-2' / 'manifest.json').write_text(
+                json.dumps({'sha256': {}}))
+            (illuminet / 'scripts').mkdir()
+            (illuminet / 'scripts' / 'infer_clid_hdr_release.py').write_text('')
+            runtime = root / 'python'
+            runtime.write_text('')
+            artifacts = root / 'artifacts'
+            artifacts.mkdir()
+            frames = {side: {stamp: {} for stamp in (1, 2, 3)} for side in ('left', 'right')}
+            args = ['clid_stereo_pipeline.py', 'prepare-coefficients', str(source),
+                    '--local-root', str(root / 'output'), '--illuminet', str(illuminet),
+                    '--illuminet-python', str(runtime), '--artifacts', str(artifacts)]
+            for existing in (True, False):
+                with self.subTest(existing=existing), \
+                     patch.object(sys, 'argv', args), \
+                     patch('Utilities.clid_stereo_pipeline.sha256_file', return_value='hash'), \
+                     patch('Utilities.clid_stereo_pipeline.shutil.which', return_value='/fake/ffmpeg'), \
+                     patch('Utilities.clid_stereo_pipeline.validate_coefficients',
+                           side_effect=[frames] if existing else [None, frames]), \
+                     patch('Utilities.clid_stereo_pipeline.validate_base', return_value=None), \
+                     patch('Utilities.clid_stereo_pipeline.subprocess.run') as inference, \
+                     patch('Utilities.clid_stereo_pipeline.index_source') as indexing, \
+                     patch('Utilities.clid_stereo_pipeline.prepare_variant') as rendering, \
+                     redirect_stdout(io.StringIO()) as output:
+                    main()
+                self.assertIn('Coefficients ready: 3 left, 3 right ->', output.getvalue())
+                self.assertEqual(inference.call_count, 0 if existing else 1)
+                indexing.assert_not_called()
+                rendering.assert_not_called()
+
     def test_rgb_pairs_use_exact_equal_stamps_and_existing_images(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

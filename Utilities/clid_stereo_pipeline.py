@@ -422,7 +422,7 @@ def run_slam(prepared: Path, slam: str, headless: bool, output: Path,
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('check', 'status', 'prepare', 'run', 'demo'))
+    parser.add_argument('action', choices=('check', 'status', 'prepare-coefficients', 'prepare', 'run', 'demo'))
     parser.add_argument('source', type=Path, help='Processed CLID sequence root with manifest.json and research-bag/*.mcap')
     parser.add_argument('--schedule-yaml', type=Path)
     parser.add_argument('--local-root', type=Path, default=DEFAULT_ROOT)
@@ -435,6 +435,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.control_plot and args.action != 'demo':
         parser.error('--control-plot requires demo')
+    if args.action == 'prepare-coefficients' and args.schedule_yaml is not None:
+        parser.error('--schedule-yaml is not used by prepare-coefficients')
     source = args.source.expanduser().resolve()
     bag = source_bag(source)
     output = local_destination(args.local_root, source)
@@ -464,17 +466,20 @@ def main() -> None:
     coefficients_hash = sha256_file(coefficients / 'stereo-manifest.json') if frames else None
     base_stamps = validate_base(base, identity, coefficients_hash) if frames else None
     state = {'source': str(source), 'bag': str(bag), 'work': str(work),
+             'coefficients_path': str(coefficients),
              'raw_index': 'ready' if base_stamps else ('partial/stale' if base.exists() else 'missing'),
              'coefficients': 'ready' if frames else ('partial/stale' if coefficients.exists() else 'missing'),
              'exact_pairs': len(set(base_stamps or []) & set(frames['left']) & set(frames['right'])) if frames else 0}
     print(json.dumps(state, indent=2), flush=True)
     if args.action in ('check', 'status'):
         return
-    if args.schedule_yaml is None:
-        parser.error('--schedule-yaml is required for prepare/run/demo')
-    schedule = args.schedule_yaml.expanduser().resolve()
-    if not schedule.is_file():
-        raise FileNotFoundError(schedule)
+    schedule = None
+    if args.action != 'prepare-coefficients':
+        if args.schedule_yaml is None:
+            parser.error('--schedule-yaml is required for prepare/run/demo')
+        schedule = args.schedule_yaml.expanduser().resolve()
+        if not schedule.is_file():
+            raise FileNotFoundError(schedule)
     work.mkdir(parents=True, exist_ok=True)
     if frames is None:
         if coefficients.exists() or review.exists():
@@ -491,6 +496,9 @@ def main() -> None:
         coefficients_hash = sha256_file(coefficients / 'stereo-manifest.json')
     else:
         print(f'Stereo inference: SKIP (verified) {len(frames["left"])} left, {len(frames["right"])} right', flush=True)
+    if args.action == 'prepare-coefficients':
+        print(f'Coefficients ready: {len(frames["left"])} left, {len(frames["right"])} right -> {coefficients}', flush=True)
+        return
     if base_stamps is None:
         if base.exists():
             raise RuntimeError(f'RAW/odometry index is partial/stale; inspect before replacing: {base}')

@@ -120,11 +120,25 @@ should pass `--illuminet`, `--illuminet-python`, `--artifacts`, and `--local-roo
 BAG=/mnt/share/nas/eph/clid-v2-sequences/113through/113through-3_20260826_214558/113through-3_seq001_20260826_214616_889091
 
 pixi run -e vslamlab clid-stereo check "$BAG"
+pixi run -e vslamlab clid-stereo prepare-coefficients "$BAG"
 pixi run -e vslamlab clid-stereo prepare "$BAG" \
   --schedule-yaml configs/clid_stereo_demo_113through.yaml
 pixi run -e vslamlab clid-stereo run "$BAG" \
   --schedule-yaml configs/clid_stereo_demo_113through.yaml --slam orbslam3
 ```
+
+`prepare-coefficients` needs no schedule YAML: it runs or verifies the full
+left/right IllumiNet coefficient export, then stops before bag odometry indexing,
+image rendering, or SLAM. It prints the coefficient directory. By default it is
+`/mnt/share/local/eph/VSLAM/clid_stereo/<source-name>_<source-fingerprint>/coefficients/`;
+for the example bag it is
+`/mnt/share/local/eph/VSLAM/clid_stereo/113through-3_seq001_20260826_214616_889091_033585b54a22/coefficients/`.
+This contains `left/frame-000000.npz` and `right/frame-000000.npz` through
+frame 574, `left/manifest.json`, `right/manifest.json`, and
+`stereo-manifest.json`. Review artifacts are stored beside it under `review/`.
+The output root is controlled by `--local-root`; a partial/stale export is
+preserved and reported rather than overwritten. Do not pass `--schedule-yaml`
+to this action. Later `prepare` or `run` reuses verified coefficients.
 
 `prepare` does not launch SLAM. `run` launches headless stereo SLAM and the
 usual VSLAM-LAB evaluation; `demo` launches the viewer. `check`/`status` show
