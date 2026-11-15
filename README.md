@@ -441,17 +441,21 @@ read-only and variants/results default to `/mnt/share/local/eph/VSLAM/relighting
 This older `clid-relight` component workflow supports camera 0 only; it blocks
 stereo when camera-1 components are unavailable. For release-2 RAW bags, the
 separate `clid-stereo` workflow prepares and relights synchronized left/right
-images using the [IllumiNet stereo local-output branch](https://github.com/yashturkar/IllumiNet/tree/feat/clid-stereo-local-output).
+images using a pinned, Pixi-installed [IllumiNet stereo package](https://github.com/yashturkar/IllumiNet/tree/release/clid-hdr-v634-stereo).
+No separate IllumiNet checkout or Python runtime is needed. The checkpoint and
+camera calibrations are read from the shared NAS release directory; choose a
+machine-local output root explicitly unless `.vslamlab-storage` is configured.
 To infer only the two cameras' coefficients, without a schedule YAML, rendered
 images, or SLAM, run:
 
 ```bash
 BAG=/mnt/share/nas/eph/clid-v2-sequences/113through/113through-3_20260826_214558/113through-3_seq001_20260826_214616_889091
-pixi run -e vslamlab clid-stereo prepare-coefficients "$BAG"
+pixi run -e vslamlab clid-stereo prepare-coefficients "$BAG" \
+  --local-root /your/local/disk/clid_stereo
 ```
 
-It prints its output directory, normally
-`/mnt/share/local/eph/VSLAM/clid_stereo/<sequence-name>_<source-fingerprint>/coefficients/`.
+It prints its output directory:
+`<local-root>/<sequence-name>_<source-fingerprint>/coefficients/`.
 Look for `left/frame-000000.npz`, `right/frame-000000.npz`, each camera's
 `manifest.json`, and `stereo-manifest.json` there. Verified exports are reused;
 `--local-root` changes the local output root. Later `clid-stereo prepare` adds

@@ -6,6 +6,7 @@ channels = ["https://prefix.dev/conda-forge"]
 platforms = [
     "linux-64", "osx-arm64", "win-64",
     { name = "linux-64-cuda", platform = "linux-64", cuda = "12.6" },
+    { name = "linux-64-cuda128", platform = "linux-64", cuda = "12.8" },
     { name = "osx-arm64-cuda", platform = "osx-arm64", cuda = "12.6" },
     { name = "win-64-cuda", platform = "win-64", cuda = "12.6" },
     { name = "linux-64-cuda129", platform = "linux-64", cuda = "12.9" },
@@ -23,6 +24,7 @@ scripts = ["scripts/activate_shared_storage.sh"]
 
 [environments]
 vslamlab = { features = ["vslamlab", "development"] }
+clid-infer = { features = ["clid-infer"], no-default-feature = true }
 cuda126 = { features = ["cuda126"], solve-group = "cuda126" }
 py10 = { features = ["py10"], solve-group = "py10" }
 py11 = { features = ["py11"], solve-group = "py11" }
@@ -61,6 +63,24 @@ vpr-lab = { features = ["vpr-lab"], solve-group = "vpr-lab" }
 ros1 = { features = ["ros1"], solve-group = "ros1" }
 ros2 = { features = ["ros2"], solve-group = "ros2" }
 rerun = { features = ["rerun"], solve-group = "rerun" }
+
+# Portable IllumiNet release-2 CUDA inference (separate from the SLAM environment).
+[feature.clid-infer]
+platforms = ["linux-64-cuda128"]
+
+[feature.clid-infer.dependencies]
+python = "3.13.*"
+numpy = ">=1.26,<3"
+pillow = ">=10,<13"
+matplotlib = ">=3.8,<4"
+py-opencv = "*"
+ffmpeg = "*"
+
+[feature.clid-infer.pypi-dependencies]
+torch = { version = "==2.7.1+cu128", index = "https://download.pytorch.org/whl/cu128" }
+mcap = ">=1.2,<2"
+mcap-ros2-support = ">=0.5,<1"
+illuminet-clid-hdr = { git = "https://github.com/yashturkar/IllumiNet.git", rev = "c78d602923b1fe3fd1386fe8da716d96d41d6ab2" }
 
 # VSLAM-LAB main pipeline
 [feature.vslamlab]

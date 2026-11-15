@@ -108,16 +108,31 @@ quantized to float16 in memory before relighting, demosaiced to 1280×800,
 rectified, and paired with a calibration scaled from the bag's CameraInfo.
 There is no per-camera or per-frame display-exposure adjustment.
 
-Inputs are read-only, including a NAS bag and the published release artifacts.
-All outputs default to `/mnt/share/local/eph/VSLAM/clid_stereo`; override with
-`--local-root` for another local disk. The IllumiNet checkout must contain the
-release-2 tag plus the local-output fix (the development branch
-`feat/clid-stereo-local-output`), and `--illuminet-python` must point to its
-CUDA-capable runtime. The current defaults match this machine; other machines
-should pass `--illuminet`, `--illuminet-python`, `--artifacts`, and `--local-root`.
+Inputs are read-only, including the NAS bag and the release-2 artifacts at
+`/mnt/share/nas/eph/clid-hdr-releases/clid-hdr-v634-release-2` (override with
+`--artifacts`). The release manifest is SHA-256 pinned. IllumiNet inference is
+installed from a fixed commit on the
+[`release/clid-hdr-v634-stereo` branch](https://github.com/yashturkar/IllumiNet/tree/release/clid-hdr-v634-stereo)
+by the separate `clid-infer` Pixi CUDA
+environment, so users do not need an IllumiNet checkout or a separate Python
+environment. On first inference, Pixi installs that environment; this path
+requires Linux, an NVIDIA GPU supported by the pinned PyTorch CUDA 12.8 wheel,
+and a CUDA 12.8-compatible driver. A GPU/FFmpeg preflight runs before inference.
+The optional `--illuminet` and `--illuminet-python` flags are only a
+paired development override.
+
+Choose a machine-local output root with `--local-root` or `VSLAM_LOCAL_ROOT`.
+If this checkout has a local `.vslamlab-storage` setting, its `clid_stereo/`
+subdirectory is used instead. Otherwise the command refuses to guess where
+large (tens of GiB) coefficient exports should go. NAS and network-mounted
+output paths are rejected, as is an unmounted `/mnt/share/local` path. Before
+new inference, the command checks that both RAW topics exist and that estimated
+coefficient/review space is available; the estimate is approximate.
 
 ```bash
 BAG=/mnt/share/nas/eph/clid-v2-sequences/113through/113through-3_20260826_214558/113through-3_seq001_20260826_214616_889091
+VSLAM_LOCAL_ROOT=/mnt/share/local/eph/VSLAM/clid_stereo  # replace with your local disk path
+export VSLAM_LOCAL_ROOT
 
 pixi run -e vslamlab clid-stereo check "$BAG"
 pixi run -e vslamlab clid-stereo prepare-coefficients "$BAG"
@@ -130,13 +145,13 @@ pixi run -e vslamlab clid-stereo run "$BAG" \
 `prepare-coefficients` needs no schedule YAML: it runs or verifies the full
 left/right IllumiNet coefficient export, then stops before bag odometry indexing,
 image rendering, or SLAM. It prints the coefficient directory. By default it is
-`/mnt/share/local/eph/VSLAM/clid_stereo/<source-name>_<source-fingerprint>/coefficients/`;
+`<VSLAM_LOCAL_ROOT>/<source-name>_<source-fingerprint>/coefficients/`;
 for the example bag it is
 `/mnt/share/local/eph/VSLAM/clid_stereo/113through-3_seq001_20260826_214616_889091_033585b54a22/coefficients/`.
 This contains `left/frame-000000.npz` and `right/frame-000000.npz` through
 frame 574, `left/manifest.json`, `right/manifest.json`, and
 `stereo-manifest.json`. Review artifacts are stored beside it under `review/`.
-The output root is controlled by `--local-root`; a partial/stale export is
+The output root is controlled by `--local-root` or `VSLAM_LOCAL_ROOT`; a partial/stale export is
 preserved and reported rather than overwritten. Do not pass `--schedule-yaml`
 to this action. Later `prepare` or `run` reuses verified coefficients.
 

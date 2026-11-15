@@ -38,16 +38,52 @@ from Utilities.extract_lightning_mcap import (  # noqa: E402
     camera_values, read_camera_info, timestamp_ns, write_calibration, write_csv,
 )
 
-DEFAULT_ROOT = Path('/mnt/share/local/eph/VSLAM/clid_stereo')
-DEFAULT_ILLUMINET = Path('/home/yashturkar/Workspace/IllumiNet')
-DEFAULT_PYTHON = Path('/mnt/share/local/eph/VSLAM/envs/illuminet-v634/bin/python')
 DEFAULT_ARTIFACTS = Path('/mnt/share/nas/eph/clid-hdr-releases/clid-hdr-v634-release-2')
+RELEASE_MANIFEST_SHA256 = 'e4629a19c5ff9370b56b6fed7f2fb23746860c1471f1597dadfff2b1dd927739'
 SIDES = ('left', 'right')
 KEYS = ('A', 'F', 'C1', 'C2')
 INFO_TOPICS = ('/cam_sync/cam0/camera_info', '/cam_sync/cam1/camera_info')
 RAW_TOPICS = ('/cam_sync/cam0/image_raw', '/cam_sync/cam1/image_raw')
 ODOMETRY_TOPIC = '/odometry'
 RENDER_VERSION = 1
+
+
+def local_root_default() -> Path | None:
+    if root := os.environ.get('VSLAM_LOCAL_ROOT'):
+        return Path(root)
+    config = REPO / '.vslamlab-storage'
+    if config.is_file() and (root := config.read_text().strip()):
+        return Path(root) / 'clid_stereo'
+    return None
+
+
+def inference_command(artifacts: Path, source: Path, coefficients: Path, review: Path,
+                      illuminet: Path | None, python: Path | None) -> tuple[list[str], Path, dict[str, str] | None]:
+    arguments = ['--manifest', str(artifacts / 'manifest.json'), '--artifacts', str(artifacts),
+                 '--camera', 'both', '--sequence', str(source),
+                 '--coefficients-output', str(coefficients), '--output', str(review)]
+    if illuminet is not None and python is not None:
+        illuminet = illuminet.expanduser().resolve()
+        python = python.expanduser().resolve()
+        if not python.is_file() or not (illuminet / 'scripts/infer_clid_hdr_release.py').is_file():
+            raise FileNotFoundError('Explicit IllumiNet checkout or Python runtime is missing')
+        environment = os.environ.copy()
+        environment['PATH'] = str(python.parent) + os.pathsep + environment.get('PATH', '')
+        if shutil.which('ffmpeg', path=environment['PATH']) is None:
+            raise FileNotFoundError(f'ffmpeg is unavailable in the inference runtime PATH: {python.parent}')
+        return [str(python), str(illuminet / 'scripts/infer_clid_hdr_release.py'), *arguments], illuminet, environment
+    pixi = shutil.which('pixi')
+    if pixi is None:
+        raise FileNotFoundError('pixi is required for packaged CLID inference')
+    prefix = [pixi, 'run', '--frozen', '--platform', 'linux-64-cuda128',
+              '--manifest-path', str(REPO / 'pixi.toml'), '-e', 'clid-infer']
+    subprocess.run([*prefix, 'python', '-c',
+                    'import shutil, torch; assert torch.cuda.is_available(), "CUDA GPU unavailable"; '
+                    'cap = torch.cuda.get_device_capability(); arch = f"sm_{cap[0]}{cap[1]}"; '
+                    'assert arch in torch.cuda.get_arch_list(), f"PyTorch lacks {arch} kernels"; '
+                    'assert shutil.which("ffmpeg"), "ffmpeg unavailable"; '
+                    'torch.ones(1, device="cuda").square()'], cwd=REPO, check=True)
+    return [*prefix, 'illuminet-clid-hdr-release', *arguments], REPO, None
 
 
 def local_destination(path: Path, source: Path) -> Path:
@@ -64,11 +100,36 @@ def local_destination(path: Path, source: Path) -> Path:
         mount = Path(fields[1].replace('\\040', ' '))
         if resolved == mount or resolved.is_relative_to(mount):
             mounts.append((len(mount.parts), fields[2]))
+    if resolved.is_relative_to(Path('/mnt/share/local')) and not any(
+        line.split()[1].replace('\\040', ' ') == '/mnt/share/local'
+        for line in Path('/proc/mounts').read_text().splitlines() if len(line.split()) >= 3
+    ):
+        raise ValueError('/mnt/share/local is not mounted; refusing to write onto the underlying disk')
     if mounts:
         filesystem = max(mounts)[1]
         if filesystem.startswith(('nfs', 'cifs', 'smb', 'fuse.sshfs', 'fuse.rclone')):
             raise ValueError(f'Output resolves to a network filesystem ({filesystem}): {resolved}')
     return resolved
+
+
+def check_inference_space(bag: Path, work: Path) -> None:
+    """Reserve approximate full-sequence coefficient and review space."""
+    with bag.open('rb') as stream:
+        summary = make_reader(stream).get_summary()
+    if summary is None or summary.statistics is None:
+        raise ValueError(f'MCAP summary unavailable for disk preflight: {bag}')
+    counts = {channel.topic: summary.statistics.channel_message_counts.get(channel.id, 0)
+              for channel in summary.channels.values()}
+    if not all(counts.get(topic, 0) for topic in RAW_TOPICS):
+        raise ValueError(f'Both RAW camera topics are required for disk preflight: {bag}')
+    frames = max(counts[topic] for topic in RAW_TOPICS)
+    required = frames * 50 * 1024**2 + 2 * 1024**3
+    free = shutil.disk_usage(work).free
+    print(f'Inference disk preflight: ~{required / 1024**3:.1f} GiB needed for {frames} frames/camera; '
+          f'{free / 1024**3:.1f} GiB free (estimate)', flush=True)
+    if free < required:
+        raise OSError(f'Insufficient local space for estimated stereo inference: '
+                      f'{free / 1024**3:.1f} GiB free < {required / 1024**3:.1f} GiB estimated')
 
 
 def source_bag(source: Path) -> Path:
@@ -425,9 +486,10 @@ def main() -> None:
     parser.add_argument('action', choices=('check', 'status', 'prepare-coefficients', 'prepare', 'run', 'demo'))
     parser.add_argument('source', type=Path, help='Processed CLID sequence root with manifest.json and research-bag/*.mcap')
     parser.add_argument('--schedule-yaml', type=Path)
-    parser.add_argument('--local-root', type=Path, default=DEFAULT_ROOT)
-    parser.add_argument('--illuminet', type=Path, default=DEFAULT_ILLUMINET)
-    parser.add_argument('--illuminet-python', type=Path, default=DEFAULT_PYTHON)
+    parser.add_argument('--local-root', type=Path, default=local_root_default(),
+                        help='Local output root; or set VSLAM_LOCAL_ROOT / .vslamlab-storage')
+    parser.add_argument('--illuminet', type=Path, help='Optional development checkout override')
+    parser.add_argument('--illuminet-python', type=Path, help='Python for --illuminet override')
     parser.add_argument('--artifacts', type=Path, default=DEFAULT_ARTIFACTS)
     parser.add_argument('--slam', default='orbslam3')
     parser.add_argument('--control-plot', action='store_true',
@@ -437,6 +499,10 @@ def main() -> None:
         parser.error('--control-plot requires demo')
     if args.action == 'prepare-coefficients' and args.schedule_yaml is not None:
         parser.error('--schedule-yaml is not used by prepare-coefficients')
+    if args.local_root is None:
+        parser.error('choose --local-root on a local disk, or set VSLAM_LOCAL_ROOT')
+    if (args.illuminet is None) != (args.illuminet_python is None):
+        parser.error('--illuminet and --illuminet-python must be used together')
     source = args.source.expanduser().resolve()
     bag = source_bag(source)
     output = local_destination(args.local_root, source)
@@ -446,19 +512,11 @@ def main() -> None:
     base = local_destination(work / 'base' / source.name, source)
     coefficients = local_destination(work / 'coefficients', source)
     review = local_destination(work / 'review', source)
-    illuminet = args.illuminet.expanduser().resolve()
-    python = args.illuminet_python.expanduser().resolve()
     artifacts = args.artifacts.expanduser().resolve()
-    manifest_path = illuminet / 'releases/clid-hdr-v634-release-2/manifest.json'
+    manifest_path = artifacts / 'manifest.json'
+    if sha256_file(manifest_path) != RELEASE_MANIFEST_SHA256:
+        raise ValueError(f'Release manifest checksum mismatch: {manifest_path}')
     release = json.loads(manifest_path.read_text())
-    if not python.is_file() or not (illuminet / 'scripts/infer_clid_hdr_release.py').is_file():
-        raise FileNotFoundError('IllumiNet release-2 code or Python runtime is missing')
-    inference_env = os.environ.copy()
-    inference_env['PATH'] = str(python.parent) + os.pathsep + inference_env.get('PATH', '')
-    if shutil.which('ffmpeg', path=inference_env['PATH']) is None:
-        raise FileNotFoundError(f'ffmpeg is unavailable in the inference runtime PATH: {python.parent}')
-    if not artifacts.is_dir():
-        raise FileNotFoundError(artifacts)
     for name, digest in release['sha256'].items():
         if sha256_file(artifacts / name) != digest:
             raise ValueError(f'Release artifact checksum mismatch: {name}')
@@ -484,12 +542,11 @@ def main() -> None:
     if frames is None:
         if coefficients.exists() or review.exists():
             raise RuntimeError(f'Inference is partial/stale; preserved for inspection: {coefficients}, {review}')
+        check_inference_space(bag, work)
         print('Stereo inference: starting with camera-specific RAW and calibrations', flush=True)
-        command = [str(python), str(illuminet / 'scripts/infer_clid_hdr_release.py'),
-                   '--manifest', str(manifest_path), '--artifacts', str(artifacts),
-                   '--camera', 'both', '--sequence', str(source),
-                   '--coefficients-output', str(coefficients), '--output', str(review)]
-        subprocess.run(command, cwd=illuminet, env=inference_env, check=True)
+        command, cwd, inference_env = inference_command(
+            artifacts, source, coefficients, review, args.illuminet, args.illuminet_python)
+        subprocess.run(command, cwd=cwd, env=inference_env, check=True)
         frames = validate_coefficients(coefficients, release, identity, sha256_file(manifest_path))
         if frames is None:
             raise RuntimeError(f'Inference output failed validation: {coefficients}')

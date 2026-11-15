@@ -12,7 +12,8 @@ from unittest.mock import patch
 import numpy as np
 
 from Utilities.clid_stereo_pipeline import (
-    index_source, local_destination, main, paired_timestamps, prepare_variant, read_component,
+    check_inference_space, index_source, inference_command, local_destination, local_root_default, main,
+    paired_timestamps, prepare_variant, read_component,
     render, rgb_pairs, stereo_maps, validate_base, validate_coefficients,
 )
 from Utilities.clid_relight import sha256_file
@@ -36,6 +37,7 @@ class StereoPipelineTests(unittest.TestCase):
             runtime.write_text('')
             artifacts = root / 'artifacts'
             artifacts.mkdir()
+            (artifacts / 'manifest.json').write_text(json.dumps({'sha256': {}}))
             frames = {side: {stamp: {} for stamp in (1, 2, 3)} for side in ('left', 'right')}
             args = ['clid_stereo_pipeline.py', 'prepare-coefficients', str(source),
                     '--local-root', str(root / 'output'), '--illuminet', str(illuminet),
@@ -44,10 +46,12 @@ class StereoPipelineTests(unittest.TestCase):
                 with self.subTest(existing=existing), \
                      patch.object(sys, 'argv', args), \
                      patch('Utilities.clid_stereo_pipeline.sha256_file', return_value='hash'), \
+                     patch('Utilities.clid_stereo_pipeline.RELEASE_MANIFEST_SHA256', 'hash'), \
                      patch('Utilities.clid_stereo_pipeline.shutil.which', return_value='/fake/ffmpeg'), \
                      patch('Utilities.clid_stereo_pipeline.validate_coefficients',
                            side_effect=[frames] if existing else [None, frames]), \
                      patch('Utilities.clid_stereo_pipeline.validate_base', return_value=None), \
+                     patch('Utilities.clid_stereo_pipeline.check_inference_space') as disk_check, \
                      patch('Utilities.clid_stereo_pipeline.subprocess.run') as inference, \
                      patch('Utilities.clid_stereo_pipeline.index_source') as indexing, \
                      patch('Utilities.clid_stereo_pipeline.prepare_variant') as rendering, \
@@ -55,8 +59,48 @@ class StereoPipelineTests(unittest.TestCase):
                     main()
                 self.assertIn('Coefficients ready: 3 left, 3 right ->', output.getvalue())
                 self.assertEqual(inference.call_count, 0 if existing else 1)
+                self.assertEqual(disk_check.call_count, 0 if existing else 1)
                 indexing.assert_not_called()
                 rendering.assert_not_called()
+
+    def test_packaged_inference_uses_pinned_pixi_environment(self):
+        with patch('Utilities.clid_stereo_pipeline.shutil.which', return_value='/usr/bin/pixi'), \
+             patch('Utilities.clid_stereo_pipeline.subprocess.run') as run:
+            command, cwd, environment = inference_command(
+                Path('/shared/release'), Path('/shared/bag'), Path('/local/coefficients'),
+                Path('/local/review'), None, None)
+        self.assertEqual(cwd, Path(__file__).resolve().parents[1])
+        self.assertIsNone(environment)
+        self.assertEqual(run.call_count, 1)
+        self.assertIn('torch.cuda.is_available()', run.call_args.args[0][-1])
+        self.assertEqual(command[:3], ['/usr/bin/pixi', 'run', '--frozen'])
+        self.assertIn('linux-64-cuda128', command)
+        self.assertIn('clid-infer', command)
+        self.assertIn('illuminet-clid-hdr-release', command)
+        self.assertIn('/shared/release/manifest.json', command)
+
+    def test_local_root_can_come_from_environment(self):
+        with patch.dict('os.environ', {'VSLAM_LOCAL_ROOT': '/data/my-vslam'}):
+            self.assertEqual(local_root_default(), Path('/data/my-vslam'))
+
+    def test_inference_space_scales_with_raw_frame_count(self):
+        with tempfile.TemporaryDirectory() as directory:
+            bag = Path(directory) / 'bag.mcap'
+            bag.write_bytes(b'fake')
+            channels = {1: SimpleNamespace(id=1, topic='/cam_sync/cam0/image_raw'),
+                        2: SimpleNamespace(id=2, topic='/cam_sync/cam1/image_raw')}
+            summary = SimpleNamespace(channels=channels, statistics=SimpleNamespace(
+                channel_message_counts={1: 575, 2: 575}))
+            required = 575 * 50 * 1024**2 + 2 * 1024**3
+            with patch('Utilities.clid_stereo_pipeline.make_reader') as reader, \
+                 patch('Utilities.clid_stereo_pipeline.shutil.disk_usage') as usage, \
+                 redirect_stdout(io.StringIO()):
+                reader.return_value.get_summary.return_value = summary
+                usage.return_value.free = required
+                check_inference_space(bag, Path(directory))
+                usage.return_value.free = required - 1
+                with self.assertRaisesRegex(OSError, 'Insufficient local space'):
+                    check_inference_space(bag, Path(directory))
 
     def test_rgb_pairs_use_exact_equal_stamps_and_existing_images(self):
         with tempfile.TemporaryDirectory() as directory:
