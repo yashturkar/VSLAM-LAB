@@ -14,12 +14,25 @@ import numpy as np
 from Utilities.clid_stereo_pipeline import (
     check_inference_space, index_source, inference_command, local_destination, local_root_default, main,
     paired_timestamps, prepare_variant, read_component,
-    render, rgb_pairs, stereo_maps, validate_base, validate_coefficients,
+    render, rgb_pairs, stereo_maps, synthetic_bayer, validate_base, validate_coefficients,
 )
 from Utilities.clid_relight import sha256_file
 
 
 class StereoPipelineTests(unittest.TestCase):
+    def test_ae_cli_rejects_missing_light_conflicting_schedule_and_invalid_light(self):
+        invalid = [
+            ['--ae'], ['--light', '0.1'],
+            ['--ae', '--light', '0.1', '--schedule-yaml', 'schedule.yaml'],
+            ['--ae', '--light', 'nan'], ['--ae', '--light', '1.1'],
+        ]
+        for flags in invalid:
+            with self.subTest(flags=flags), patch.object(sys, 'argv', [
+                    'clid_stereo_pipeline.py', 'prepare', '/unused', *flags]), \
+                 redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as exit_error:
+                main()
+            self.assertEqual(exit_error.exception.code, 2)
+
     def test_prepare_coefficients_needs_no_schedule_and_stops_before_rendering(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -199,6 +212,69 @@ class StereoPipelineTests(unittest.TestCase):
         bgr = render(arrays, calibration, 0, 0)
         self.assertGreater(int(bgr[400, 640, 2]), 250)
         self.assertEqual(int(bgr[400, 640, 0]), 0)
+
+    def test_ae_feedback_is_12_bit_pre_gamma_bayer(self):
+        arrays = {key: np.zeros((4, 400, 640), np.float16) for key in ('A', 'F', 'C1', 'C2')}
+        arrays['A'].fill(0.5)
+        calibration = {'power_response': {'commanded': [0, 1], 'effective': [0, 1]},
+                       'response': {'bayer_alpha': {key: 1 for key in ('R', 'G1', 'G2', 'B')}}}
+        feedback = synthetic_bayer(arrays, calibration, 0.1, 0, maximum=4095)
+        self.assertEqual(feedback.dtype, np.uint16)
+        self.assertEqual(int(feedback[0, 0]), 2048)
+        self.assertEqual(int(feedback.max()), 2048)
+        self.assertEqual(int(synthetic_bayer(arrays, calibration, 0.1, 2, maximum=4095).max()), 4095)
+
+    def test_ae50_uses_previous_left_frame_for_shared_stereo_ev_and_reuses_trace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            base, coefficients, artifacts = (root / name for name in ('base', 'coefficients', 'artifacts'))
+            for folder in (base, coefficients, artifacts):
+                folder.mkdir()
+            stamps = (100, 200, 300)
+            (base / 'pairing.csv').write_text('timestamp_ns\n100\n200\n300\n')
+            (base / 'groundtruth.csv').write_text('ts (ns),tx (m),ty (m),tz (m),qx,qy,qz,qw\n')
+            (base / 'extraction_metadata.json').write_text(json.dumps({'fps': 10}))
+            (coefficients / 'stereo-manifest.json').write_text('{}')
+            release = {'cameras': {}}
+            frames = {}
+            for side in ('left', 'right'):
+                name = f'{side}.json'
+                release['cameras'][side] = {'calibration': name}
+                (artifacts / name).write_text(json.dumps({
+                    'side': side, 'power_response': {'commanded': [0, 1], 'effective': [0, 1]},
+                }))
+                frames[side] = {stamp: {'file': root / f'{side}-{stamp}.npz', 'sha256': 'hash'}
+                                for stamp in stamps}
+            projection = np.array([[600., 0, 640, 0], [0, 600, 400, 0], [0, 0, 1, 0]])
+            calls = []
+            def fake_render(_values, calibration, light, ev):
+                calls.append((calibration['side'], light, ev))
+                return np.zeros((800, 1280, 3), np.uint8)
+            with patch('Utilities.clid_stereo_pipeline.stereo_maps', return_value=(
+                    {'left': (None, None), 'right': (None, None)}, projection, 0.1)), \
+                 patch('Utilities.clid_stereo_pipeline.read_component', return_value={}), \
+                 patch('Utilities.clid_stereo_pipeline.synthetic_bayer',
+                       return_value=np.zeros((4, 4), np.uint16)), \
+                 patch('Utilities.clid_stereo_pipeline.render', side_effect=fake_render), \
+                 patch('Utilities.clid_stereo_pipeline.cv2.remap', side_effect=lambda image, *_a, **_kw: image):
+                destination = prepare_variant(base, root / 'bag.mcap', coefficients, frames,
+                                              artifacts, release, None, root / 'out', ae_light=0.1)
+                again = prepare_variant(base, root / 'bag.mcap', coefficients, frames,
+                                        artifacts, release, None, root / 'out', ae_light=0.1)
+            self.assertEqual(destination, again)
+            self.assertEqual(len(calls), 6)
+            for index in range(3):
+                self.assertEqual(calls[2 * index][1:], calls[2 * index + 1][1:])
+            self.assertAlmostEqual(calls[0][2], 0)
+            self.assertAlmostEqual(calls[2][2], np.log2(8.096 / 4))
+            self.assertAlmostEqual(calls[4][2], np.log2(12.192 / 4))
+            with (destination / 'ae_trace.csv').open(newline='') as stream:
+                rows = list(csv.DictReader(stream))
+            self.assertEqual(len(rows), 3)
+            self.assertEqual(rows[0]['clamp'], 'none')
+            self.assertEqual(rows[-1]['clamp'], 'max')
+            self.assertEqual(float(rows[-1]['applied_next_ms']), 16.0)
+            self.assertEqual(json.loads((destination / 'relight.json').read_text())['ae50']['trace'], 'ae_trace.csv')
 
     def test_stereo_projection_scales_baseline_without_changing_meters(self):
         class Info:

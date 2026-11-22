@@ -170,6 +170,39 @@ its exact paired-RAW frame count; frame 0 is required, and values hold until
 the next specified frame. The sample schedule above is for the 575-pair
 113through bag, not a universal length.
 
+For a fixed-light auto-exposure baseline, use `--ae --light` instead of
+`--schedule-yaml`. Light is a commanded fraction in `[0,1]`; these commands
+prepare the 10% and 100% baselines without launching SLAM:
+
+```bash
+pixi run -e vslamlab clid-stereo prepare "$BAG" --ae --light 0.1
+pixi run -e vslamlab clid-stereo prepare "$BAG" --ae --light 1.0
+pixi run -e vslamlab clid-stereo run "$BAG" --ae --light 0.1 --slam orbslam3
+pixi run -e vslamlab clid-stereo demo "$BAG" --ae --light 1.0 --slam orbslam3 --control-plot
+```
+
+This reuses BorealHDR's pinned `Metric_Classical(50)` update: meter the left
+camera's **unrectified, synthetic 12-bit Bayer** image after the CLID calibrated
+response (before demosaic and display gamma), convert it to grayscale with
+OpenCV's Bayer RG conversion, and measure the mean in 12-bit DN. The target is
+2048 DN, with a strict ±15 DN deadband and proportional gain 0.002 ms/DN.
+Frame `n` uses the exposure chosen from frame `n−1`; the initial exposure is
+4 ms (0 EV). The requested next exposure uses the upstream absolute-value
+update, then is clamped to 1–16 ms, CLID's −2 to +2 EV range. Exposure is
+continuous within that interval, not rounded to discrete stops. Both cameras
+use the same chosen EV, but retain their own calibrated light and Bayer
+responses. The synthetic feedback is calibrated to the CLID response, not a
+physical BorealHDR sensor measurement; controller arithmetic is the same, but
+its closed-loop behavior is not claimed identical to BorealHDR.
+
+Each AE variant writes a dense `schedule.yaml`, `ae_trace.csv`, the usual
+`relight.csv`, and `relight.json` provenance beside the images. The trace has
+applied exposure in ms/EV, left mean/error in 12-bit DN, requested and clamped
+next exposure, and clamp status. At low light the target may remain unreachable
+even at +2 EV; `max` in the trace makes this explicit. Complete AE variants
+are verified and reused. `--ae` cannot be combined with `--schedule-yaml`,
+and `--light` is required with `--ae`.
+
 For a smooth per-frame test on that bag, use
 [`configs/clid_stereo_sine_113through.yaml`](../configs/clid_stereo_sine_113through.yaml).
 It specifies all 575 frames: commanded light follows `0.5 + 0.4 sin(2πn/115 + 0.19)`

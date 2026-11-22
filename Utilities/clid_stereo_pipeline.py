@@ -34,6 +34,9 @@ if str(REPO) not in sys.path:
 from Utilities.clid_relight import (  # noqa: E402
     atomic_json, load_schedule, object_fingerprint, sha256_file, temporal_completion,
 )
+from Utilities.borealhdr import (  # noqa: E402
+    AE50_GAIN, AE50_SOURCE, AE50_TARGET, AE50_THRESHOLD, ae50_next_exposure,
+)
 from Utilities.extract_lightning_mcap import (  # noqa: E402
     camera_values, read_camera_info, timestamp_ns, write_calibration, write_csv,
 )
@@ -46,6 +49,10 @@ INFO_TOPICS = ('/cam_sync/cam0/camera_info', '/cam_sync/cam1/camera_info')
 RAW_TOPICS = ('/cam_sync/cam0/image_raw', '/cam_sync/cam1/image_raw')
 ODOMETRY_TOPIC = '/odometry'
 RENDER_VERSION = 1
+AE50_FEEDBACK_VERSION = 1
+AE50_INITIAL_MS = 4.0
+AE50_MIN_MS = 1.0
+AE50_MAX_MS = 16.0
 
 
 def local_root_default() -> Path | None:
@@ -314,7 +321,9 @@ def read_component(path: Path, expected_hash: str) -> dict[str, np.ndarray]:
     return quantized
 
 
-def render(values: dict[str, np.ndarray], calibration: dict[str, Any], light: float, ev: float) -> np.ndarray:
+def synthetic_bayer(values: dict[str, np.ndarray], calibration: dict[str, Any], light: float,
+                    ev: float, maximum: int = 65535) -> np.ndarray:
+    """Calibrated, unrectified Bayer response; AE meters this before display gamma."""
     response = calibration['power_response']
     q = np.float32(np.interp(light, response['commanded'], response['effective']))
     a, f, c1, c2 = (values[key].astype(np.float32) for key in KEYS)
@@ -325,7 +334,11 @@ def render(values: dict[str, np.ndarray], calibration: dict[str, Any], light: fl
     mosaic = np.empty((800, 1280), np.float32)
     mosaic[0::2, 0::2], mosaic[0::2, 1::2] = site[0], site[1]
     mosaic[1::2, 0::2], mosaic[1::2, 1::2] = site[2], site[3]
-    bayer = np.round(mosaic * 65535).astype(np.uint16)
+    return np.round(mosaic * maximum).astype(np.uint16)
+
+
+def render(values: dict[str, np.ndarray], calibration: dict[str, Any], light: float, ev: float) -> np.ndarray:
+    bayer = synthetic_bayer(values, calibration, light, ev)
     # In OpenCV's Bayer aliases, RG2RGB yields BGR bytes for our R-at-(0,0)
     # mosaic. Verify with the red-site regression test before changing this.
     bgr = cv2.cvtColor(bayer, cv2.COLOR_BAYER_RG2RGB).astype(np.float32) / 65535.0
@@ -353,19 +366,55 @@ def stereo_maps(bag: Path, size: tuple[int, int]) -> tuple[dict[str, tuple[np.nd
     return maps, projections[0], baseline
 
 
+def valid_ae_trace(destination: Path, stamps: list[int], light: float) -> bool:
+    """Do not reuse an AE variant with incomplete or inconsistent feedback."""
+    try:
+        with (destination / 'ae_trace.csv').open(newline='') as stream:
+            rows = list(csv.DictReader(stream))
+        dense = load_schedule(destination / 'schedule.yaml', len(stamps))
+        if len(rows) != len(stamps):
+            return False
+        for index, (stamp, row, setting) in enumerate(zip(stamps, rows, dense)):
+            if int(row['frame_num']) != index or int(row['timestamp_ns']) != stamp:
+                return False
+            exposure = float(row['applied_exposure_ms'])
+            if not AE50_MIN_MS <= exposure <= AE50_MAX_MS:
+                return False
+            if not math.isclose(exposure, AE50_INITIAL_MS * 2 ** setting['exposure_ev'], abs_tol=1e-9):
+                return False
+            if not math.isclose(float(row['light_commanded']), light, abs_tol=1e-12):
+                return False
+            if index + 1 < len(rows) and not math.isclose(
+                float(row['applied_next_ms']), float(rows[index + 1]['applied_exposure_ms']), abs_tol=1e-9
+            ):
+                return False
+        return True
+    except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError):
+        return False
+
+
 def prepare_variant(base: Path, bag: Path, coefficients: Path, frames: dict[str, dict[int, dict[str, Any]]],
-                    artifacts: Path, release: dict[str, Any], schedule: Path, output: Path) -> Path:
+                    artifacts: Path, release: dict[str, Any], schedule: Path | None, output: Path,
+                    ae_light: float | None = None) -> Path:
     stamps = [stamp for stamp in paired_timestamps(base / 'pairing.csv') if stamp in frames['left'] and stamp in frames['right']]
     if len(stamps) < 3:
         raise ValueError('Fewer than three exact preview/left-RAW/right-RAW timestamp matches')
-    dense = load_schedule(schedule, len(stamps))
+    if (schedule is None) == (ae_light is None):
+        raise ValueError('Choose exactly one of schedule YAML or AE50 fixed light')
+    if ae_light is not None and (not math.isfinite(ae_light) or not 0 <= ae_light <= 1):
+        raise ValueError('AE50 light must be a finite fraction in [0, 1]')
+    dense = load_schedule(schedule, len(stamps)) if schedule is not None else None
     calibrations = {side: json.loads((artifacts / release['cameras'][side]['calibration']).read_text()) for side in SIDES}
     fingerprint = object_fingerprint({
         'renderer_version': RENDER_VERSION, 'bag': str(bag),
         'coefficients_manifest': sha256_file(coefficients / 'stereo-manifest.json'),
         'base_metadata': sha256_file(base / 'extraction_metadata.json'),
         'calibrations': {side: sha256_file(artifacts / release['cameras'][side]['calibration']) for side in SIDES},
-        'schedule': dense,
+        'policy': {'schedule': dense} if dense is not None else {
+            'ae50_source': AE50_SOURCE, 'feedback_version': AE50_FEEDBACK_VERSION,
+            'light': ae_light, 'initial_ms': AE50_INITIAL_MS,
+            'min_ms': AE50_MIN_MS, 'max_ms': AE50_MAX_MS,
+        },
     })
     destination = output / 'variants' / fingerprint / 'dataset' / base.name
     marker = destination / 'relight.json'
@@ -374,10 +423,14 @@ def prepare_variant(base: Path, bag: Path, coefficients: Path, frames: dict[str,
         if previous.get('status') == 'complete' and previous.get('fingerprint') == fingerprint:
             inventory = previous.get('image_bytes', {})
             support = ('rgb.csv', 'calibration.yaml', 'groundtruth.csv', 'relight.csv')
+            if ae_light is not None:
+                support += ('schedule.yaml', 'ae_trace.csv')
             if all((destination / name).is_file() for name in support) and len(inventory) == 2 * len(stamps) and all(
                 (destination / path).is_file() and (destination / path).stat().st_size == size
                 for path, size in inventory.items()
-            ) and rgb_pairs(destination / 'rgb.csv') == stamps:
+            ) and rgb_pairs(destination / 'rgb.csv') == stamps and (
+                ae_light is None or valid_ae_trace(destination, stamps, ae_light)
+            ):
                 print(f'Relight: SKIP (verified) {destination}', flush=True)
                 return destination
     maps, projection, baseline = stereo_maps(bag, (1280, 800))
@@ -386,12 +439,27 @@ def prepare_variant(base: Path, bag: Path, coefficients: Path, frames: dict[str,
         (destination / ('rgb_0' if side == 'left' else 'rgb_1')).mkdir(parents=True, exist_ok=True)
     rows = []
     trace = []
+    ae_rows = []
     image_bytes = {}
-    for index, (stamp, setting) in enumerate(zip(stamps, dense)):
+    exposure_ms = AE50_INITIAL_MS
+    if dense is None:
+        dense = []
+    for index, stamp in enumerate(stamps):
+        setting = dense[index] if ae_light is None else {
+            'light': ae_light, 'exposure_ev': math.log2(exposure_ms / AE50_INITIAL_MS),
+        }
         row = [stamp, f'rgb_0/{stamp}.png', stamp, f'rgb_1/{stamp}.png']
         for side, relative in zip(SIDES, (row[1], row[3])):
             info = frames[side][stamp]
             packed = read_component(info['file'], info['sha256'])
+            if side == 'left' and ae_light is not None:
+                bayer12 = synthetic_bayer(packed, calibrations['left'], ae_light,
+                                          setting['exposure_ev'], maximum=4095)
+                mean_dn, requested_ms = ae50_next_exposure(bayer12, exposure_ms)
+                next_ms = min(AE50_MAX_MS, max(AE50_MIN_MS, requested_ms))
+                clamp = 'min' if requested_ms < AE50_MIN_MS else 'max' if requested_ms > AE50_MAX_MS else 'none'
+                ae_rows.append([index, stamp, ae_light, setting['exposure_ev'], exposure_ms,
+                                mean_dn, mean_dn - AE50_TARGET, requested_ms, next_ms, clamp])
             image = cv2.remap(render(packed, calibrations[side], setting['light'], setting['exposure_ev']),
                               *maps[side], interpolation=cv2.INTER_LINEAR)
             target = destination / relative
@@ -400,20 +468,37 @@ def prepare_variant(base: Path, bag: Path, coefficients: Path, frames: dict[str,
                 raise OSError(f'Could not write {temporary}')
             temporary.replace(target)
             image_bytes[relative] = target.stat().st_size
+        if ae_light is not None:
+            dense.append(setting)
+            exposure_ms = next_ms
         rows.append(row)
         trace.append([index, stamp, setting['light'], setting['exposure_ev'],
                       float(np.interp(setting['light'], calibrations['left']['power_response']['commanded'], calibrations['left']['power_response']['effective'])),
                       float(np.interp(setting['light'], calibrations['right']['power_response']['commanded'], calibrations['right']['power_response']['effective']))])
         if index == 0 or (index + 1) % 25 == 0 or index == len(stamps) - 1:
-            print(f'Relight: {index + 1}/{len(stamps)} pairs ({100 * (index + 1) / len(stamps):.1f}%) | light={setting["light"]:g}, EV={setting["exposure_ev"]:+g}', flush=True)
+            ae_status = (f', mean={mean_dn:.1f}/4095 DN, next={next_ms:.3f} ms'
+                         f' ({clamp} clamp)' if ae_light is not None else '')
+            print(f'Relight: {index + 1}/{len(stamps)} pairs ({100 * (index + 1) / len(stamps):.1f}%) | light={setting["light"]:g}, EV={setting["exposure_ev"]:+g}{ae_status}', flush=True)
     write_csv(destination / 'rgb.csv', ['ts_rgb_0 (ns)', 'path_rgb_0', 'ts_rgb_1 (ns)', 'path_rgb_1'], rows)
     write_csv(destination / 'relight.csv', ['frame_num', 'timestamp_ns', 'light_commanded', 'exposure_ev', 'left_effective_power', 'right_effective_power'], trace)
+    if ae_light is not None:
+        (destination / 'schedule.yaml').write_text(yaml.safe_dump({index: setting for index, setting in enumerate(dense)}, sort_keys=False))
+        write_csv(destination / 'ae_trace.csv', ['frame_num', 'timestamp_ns', 'light_commanded',
+                  'exposure_ev', 'applied_exposure_ms', 'left_mean_dn_12bit', 'error_dn',
+                  'requested_next_ms', 'applied_next_ms', 'clamp'], ae_rows)
     shutil.copy2(base / 'groundtruth.csv', destination / 'groundtruth.csv')
     write_calibration(destination / 'calibration.yaml', projection, baseline, float(metadata['fps']), (1280, 800))
     atomic_json(marker, {
         'schema_version': 1, 'status': 'complete', 'fingerprint': fingerprint,
         'source_bag': str(bag), 'base_sequence': str(base), 'coefficients': str(coefficients),
-        'schedule_yaml': str(schedule), 'frame_count': len(stamps), 'baseline_m': baseline,
+        'schedule_yaml': str(schedule) if schedule is not None else str(destination / 'schedule.yaml'),
+        'ae50': None if ae_light is None else {
+            'source': AE50_SOURCE, 'light_commanded': ae_light, 'initial_exposure_ms': AE50_INITIAL_MS,
+            'min_exposure_ms': AE50_MIN_MS, 'max_exposure_ms': AE50_MAX_MS,
+            'target_dn_12bit': AE50_TARGET, 'deadband_dn': AE50_THRESHOLD, 'gain_ms_per_dn': AE50_GAIN,
+            'feedback': 'left synthetic unrectified BayerRG12; frame n controls frame n+1',
+            'trace': 'ae_trace.csv', 'feedback_version': AE50_FEEDBACK_VERSION,
+        }, 'frame_count': len(stamps), 'baseline_m': baseline,
         'resolution': [1280, 800], 'image_bytes': image_bytes,
         'display': 'camera-specific Bayer response, demosaic, gamma 2.2; no independent display exposure',
         'component_storage': 'IllumiNet float32 loaded and quantized to float16 before synthesis',
@@ -486,6 +571,8 @@ def main() -> None:
     parser.add_argument('action', choices=('check', 'status', 'prepare-coefficients', 'prepare', 'run', 'demo'))
     parser.add_argument('source', type=Path, help='Processed CLID sequence root with manifest.json and research-bag/*.mcap')
     parser.add_argument('--schedule-yaml', type=Path)
+    parser.add_argument('--ae', action='store_true', help='Use BorealHDR classical AE50 on CLID left Bayer feedback')
+    parser.add_argument('--light', type=float, help='Fixed commanded light fraction [0,1] for --ae')
     parser.add_argument('--local-root', type=Path, default=local_root_default(),
                         help='Local output root; or set VSLAM_LOCAL_ROOT / .vslamlab-storage')
     parser.add_argument('--illuminet', type=Path, help='Optional development checkout override')
@@ -499,6 +586,14 @@ def main() -> None:
         parser.error('--control-plot requires demo')
     if args.action == 'prepare-coefficients' and args.schedule_yaml is not None:
         parser.error('--schedule-yaml is not used by prepare-coefficients')
+    if args.action in ('check', 'status', 'prepare-coefficients') and (args.ae or args.light is not None):
+        parser.error('--ae and --light are only used by prepare/run/demo')
+    if args.ae and args.schedule_yaml is not None:
+        parser.error('--ae and --schedule-yaml are mutually exclusive')
+    if args.ae != (args.light is not None):
+        parser.error('--ae requires --light, and --light requires --ae')
+    if args.light is not None and (not math.isfinite(args.light) or not 0 <= args.light <= 1):
+        parser.error('--light must be a finite fraction in [0, 1]')
     if args.local_root is None:
         parser.error('choose --local-root on a local disk, or set VSLAM_LOCAL_ROOT')
     if (args.illuminet is None) != (args.illuminet_python is None):
@@ -533,11 +628,12 @@ def main() -> None:
         return
     schedule = None
     if args.action != 'prepare-coefficients':
-        if args.schedule_yaml is None:
-            parser.error('--schedule-yaml is required for prepare/run/demo')
-        schedule = args.schedule_yaml.expanduser().resolve()
-        if not schedule.is_file():
-            raise FileNotFoundError(schedule)
+        if not args.ae:
+            if args.schedule_yaml is None:
+                parser.error('--schedule-yaml or --ae --light is required for prepare/run/demo')
+            schedule = args.schedule_yaml.expanduser().resolve()
+            if not schedule.is_file():
+                raise FileNotFoundError(schedule)
     work.mkdir(parents=True, exist_ok=True)
     if frames is None:
         if coefficients.exists() or review.exists():
@@ -566,7 +662,8 @@ def main() -> None:
             raise RuntimeError('RAW/odometry index did not validate')
     else:
         print(f'RAW/odometry index: SKIP (verified) {len(base_stamps)} pairs', flush=True)
-    prepared = prepare_variant(base, bag, coefficients, frames, artifacts, release, schedule, work)
+    prepared = prepare_variant(base, bag, coefficients, frames, artifacts, release, schedule, work,
+                               ae_light=args.light)
     print(f'Prepared {len(rgb_pairs(prepared / "rgb.csv"))} exact stereo pairs', flush=True)
     if args.action in ('run', 'demo'):
         run_slam(prepared, args.slam, headless=args.action == 'run', output=work,
