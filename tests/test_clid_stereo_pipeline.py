@@ -14,9 +14,11 @@ import numpy as np
 from Utilities.clid_stereo_pipeline import (
     check_inference_space, index_source, inference_command, local_destination, local_root_default, main,
     paired_timestamps, prepare_variant, read_component,
-    render, rgb_pairs, stereo_maps, synthetic_bayer, validate_base, validate_coefficients,
+    render, rgb_pairs, stereo_maps, synthetic_bayer, valid_auto_light_trace,
+    validate_base, validate_coefficients,
 )
 from Utilities.clid_relight import sha256_file
+from Utilities.clid_auto_light import AutoLightPolicy
 
 
 class StereoPipelineTests(unittest.TestCase):
@@ -25,6 +27,21 @@ class StereoPipelineTests(unittest.TestCase):
             ['--ae'], ['--light', '0.1'],
             ['--ae', '--light', '0.1', '--schedule-yaml', 'schedule.yaml'],
             ['--ae', '--light', 'nan'], ['--ae', '--light', '1.1'],
+        ]
+        for flags in invalid:
+            with self.subTest(flags=flags), patch.object(sys, 'argv', [
+                    'clid_stereo_pipeline.py', 'prepare', '/unused', *flags]), \
+                 redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as exit_error:
+                main()
+            self.assertEqual(exit_error.exception.code, 2)
+
+    def test_auto_light_cli_rejects_conflicting_or_invalid_options(self):
+        invalid = [
+            ['--auto-light'], ['--ae', '--auto-light', '--light', '0.1'],
+            ['--ae', '--auto-light', '--schedule-yaml', 'schedule.yaml'],
+            ['--ae', '--auto-light', '--light-rate-hz', '0'],
+            ['--ae', '--auto-light', '--light-max-step', 'nan'],
+            ['--ae', '--light', '0.1', '--light-min', '0.1'],
         ]
         for flags in invalid:
             with self.subTest(flags=flags), patch.object(sys, 'argv', [
@@ -275,6 +292,60 @@ class StereoPipelineTests(unittest.TestCase):
             self.assertEqual(rows[-1]['clamp'], 'max')
             self.assertEqual(float(rows[-1]['applied_next_ms']), 16.0)
             self.assertEqual(json.loads((destination / 'relight.json').read_text())['ae50']['trace'], 'ae_trace.csv')
+
+    def test_auto_light_writes_trace_shared_controls_and_reuses_variant(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            base, coefficients, artifacts = (root / name for name in ('base', 'coefficients', 'artifacts'))
+            for folder in (base, coefficients, artifacts):
+                folder.mkdir()
+            stamps = (100_000_000, 200_000_000, 600_000_000)
+            (base / 'pairing.csv').write_text('timestamp_ns\n' + ''.join(f'{s}\n' for s in stamps))
+            (base / 'groundtruth.csv').write_text('ts (ns),tx (m),ty (m),tz (m),qx,qy,qz,qw\n')
+            (base / 'extraction_metadata.json').write_text(json.dumps({'fps': 10}))
+            (coefficients / 'stereo-manifest.json').write_text('{}')
+            release = {'cameras': {}}
+            frames = {}
+            for side in ('left', 'right'):
+                name = f'{side}.json'
+                release['cameras'][side] = {'calibration': name}
+                (artifacts / name).write_text(json.dumps({'side': side,
+                    'power_response': {'commanded': [0, 1], 'effective': [0, 1]}}))
+                frames[side] = {stamp: {'file': root / f'{side}-{stamp}.npz', 'sha256': 'hash'}
+                                for stamp in stamps}
+            projection = np.array([[600., 0, 640, 0], [0, 600, 400, 0], [0, 0, 1, 0]])
+            calls = []
+            def fake_render(_values, calibration, light, ev):
+                calls.append((calibration['side'], light, ev))
+                return np.zeros((8, 8, 3), np.uint8)
+            def fake_bayer(_values, _calibration, light, ev, maximum=65535):
+                return np.full((8, 8), round(100 * (light + 0.5) * 2 ** ev), np.uint16)
+            with patch('Utilities.clid_stereo_pipeline.stereo_maps', return_value=(
+                    {'left': (None, None), 'right': (None, None)}, projection, 0.1)), \
+                 patch('Utilities.clid_stereo_pipeline.read_component',
+                       return_value={'dummy': np.zeros((4, 8, 8), np.float16)}), \
+                 patch('Utilities.clid_stereo_pipeline.synthetic_bayer', side_effect=fake_bayer), \
+                 patch('Utilities.clid_stereo_pipeline.render', side_effect=fake_render), \
+                 patch('Utilities.clid_stereo_pipeline.cv2.remap', side_effect=lambda image, *_a, **_kw: image):
+                destination = prepare_variant(base, root / 'bag.mcap', coefficients, frames,
+                    artifacts, release, None, root / 'out', auto_policy=AutoLightPolicy())
+                again = prepare_variant(base, root / 'bag.mcap', coefficients, frames,
+                    artifacts, release, None, root / 'out', auto_policy=AutoLightPolicy())
+            self.assertEqual(destination, again)
+            self.assertEqual(len(calls), 6)
+            for index in range(3):
+                self.assertEqual(calls[2 * index][1:], calls[2 * index + 1][1:])
+            with (destination / 'auto_light_trace.csv').open(newline='') as stream:
+                rows = list(csv.DictReader(stream))
+            self.assertEqual(len(rows), 3)
+            self.assertGreater(float(rows[-1]['light_commanded']), 0.1)
+            self.assertGreaterEqual(float(rows[-1]['right_mean_dn_12bit']), 0)
+            self.assertEqual(float(rows[-1]['right_saturated_fraction']), 0)
+            self.assertEqual(json.loads((destination / 'relight.json').read_text())['auto_light']['light_rate_hz'], 3.0)
+            self.assertTrue(valid_auto_light_trace(destination, list(stamps), AutoLightPolicy()))
+            trace = destination / 'auto_light_trace.csv'
+            trace.write_text(trace.read_text().replace('right_saturated_fraction', 'missing_saturation'))
+            self.assertFalse(valid_auto_light_trace(destination, list(stamps), AutoLightPolicy()))
 
     def test_stereo_projection_scales_baseline_without_changing_meters(self):
         class Info:

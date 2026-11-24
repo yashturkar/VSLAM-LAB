@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import math
 import sys
 import tkinter as tk
@@ -48,6 +49,7 @@ def load_control_trace(sequence: Path) -> tuple[list[dict[str, float]], dict[str
             raise ValueError(f'Out-of-range CLID control at frame {index}')
         if not all(0 <= item[key] <= 1 for key in ('left_effective_power', 'right_effective_power')):
             raise ValueError(f'Out-of-range effective power at frame {index}')
+        item['exposure_ms'] = 4.0 * 2.0 ** item['exposure_ev']
         values.append(item)
         by_filename[filename] = index
     return values, by_filename
@@ -55,6 +57,10 @@ def load_control_trace(sequence: Path) -> tuple[list[dict[str, float]], dict[str
 
 def show_plot(sequence: Path) -> None:
     values, by_filename = load_control_trace(sequence)
+    metadata_path = sequence / 'relight.json'
+    metadata = json.loads(metadata_path.read_text()) if metadata_path.is_file() else {}
+    auto_light = metadata.get('auto_light')
+    preferred_ms = auto_light.get('preferred_exposure_ms') if isinstance(auto_light, dict) else None
     monitor = FrameOpenMonitor(sequence / 'rgb_0')
     try:
         root = tk.Tk()
@@ -98,8 +104,13 @@ def show_plot(sequence: Path) -> None:
 
         panel(top1, bottom1, 'light_commanded', 0, 1, (0, .25, .5, .75, 1),
               '#087e8b', 'Commanded onboard light · fraction [0, 1]')
-        panel(top2, bottom2, 'exposure_ev', -2, 2, (-2, -1, 0, 1, 2),
-              '#e16428', 'Exposure · EV (stops)')
+        panel(top2, bottom2, 'exposure_ms', 1, 16, (1, 4, 8, 12, 16),
+              '#e16428', 'Equivalent exposure · ms (relative to 4 ms at 0 EV)')
+        if preferred_ms is not None:
+            y_preferred = bottom2 - (bottom2 - top2) * (preferred_ms - 1) / 15
+            canvas.create_line(left, y_preferred, right, y_preferred, fill='#aa6a21', dash=(5, 5))
+            canvas.create_text(right - 4, y_preferred - 8, text=f'preferred {preferred_ms:g} ms',
+                               anchor='e', fill='#aa6a21')
         canvas.create_text(left, bottom2 + 20, text='0', anchor='w', fill='#475569')
         canvas.create_text(right, bottom2 + 20, text=str(len(values) - 1), anchor='e', fill='#475569')
         canvas.create_text((left + right) / 2, bottom2 + 20, text='Paired frame', fill='#475569')
@@ -109,7 +120,7 @@ def show_plot(sequence: Path) -> None:
         else:
             item = values[frame]
             label = (f'Frame {frame}/{len(values) - 1}   light {item["light_commanded"]:.3f} commanded'
-                     f'   exposure {item["exposure_ev"]:+.3f} EV'
+                     f'   exposure {item["exposure_ms"]:.3f} ms ({item["exposure_ev"]:+.3f} EV)'
                      f'   effective L/R {item["left_effective_power"]:.3f}/{item["right_effective_power"]:.3f}')
         if current['overflow']:
             label += '   WARNING: frame-open events lost'

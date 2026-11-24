@@ -463,6 +463,9 @@ YAML-driven relit stereo images, and `clid-stereo run` adds SLAM and evaluation.
 For fixed-light AE50 instead of a YAML schedule, run
 `pixi run -e vslamlab clid-stereo prepare "$BAG" --ae --light 0.1`
 (or `--light 1.0`); `run` and `demo` accept the same flags.
+For AE50 that automatically raises onboard light before exceeding 8 ms, use
+`pixi run -e vslamlab clid-stereo prepare "$BAG" --ae --auto-light`.
+`demo --ae-plot` shows both light and exposure against the opened stereo frames.
 See the [CLID relighting guide](docs/CLIDRelighting.md) for both workflows,
 their YAML schedules, calibration, storage, and complete commands.
 

@@ -203,6 +203,43 @@ even at +2 EV; `max` in the trace makes this explicit. Complete AE variants
 are verified and reused. `--ae` cannot be combined with `--schedule-yaml`,
 and `--light` is required with `--ae`.
 
+### AE50 with automatic light
+
+Use `--ae --auto-light` to allocate AE50's requested brightness across exposure
+and onboard light. The target remains the left synthetic Bayer grayscale mean
+of 2048/4095 DN. Initial controls are 4 ms and 10% commanded light by default.
+Exposure is continuous, and the 8 ms preference is **soft**: if 100% light at
+8 ms cannot provide the requested brightness, exposure may rise to 16 ms.
+
+```bash
+pixi run -e vslamlab clid-stereo prepare "$BAG" --ae --auto-light
+pixi run -e vslamlab clid-stereo run "$BAG" --ae --auto-light --slam orbslam3
+pixi run -e vslamlab clid-stereo demo "$BAG" --ae --auto-light --slam orbslam3 --ae-plot
+```
+
+Options: `--light-min 0.1` sets the starting/minimum commanded light,
+`--preferred-exposure-ms 8` sets the soft exposure preference,
+`--light-rate-hz 3` allows at most three light changes per second using paired
+frame timestamps, and `--light-max-step 0.1` caps each change to 10 percentage
+points. All are configurable with `--auto-light`. While light has headroom but
+is waiting for its next permitted change, exposure stays at the preferred
+value and the image may remain temporarily underexposed. Exposure can drop
+below that value when the held light would otherwise overexpose the image.
+
+Frame `n` uses only its own CLID coefficients and measured Bayer mean to
+choose frame `n+1` controls; it does not peek at frame `n+1` coefficients. The
+controller first uses the unchanged BorealHDR AE50 exposure update, then
+predicts the resulting brightness from the full CLID light-response model.
+It seeks the minimum light capable of that brightness at or below the preferred
+exposure, subject to the rate and step limits. Because scene motion can change
+the next frame's response, this is a causal estimate corrected by later frames,
+not a guarantee. The candidate search uses an 8× subsampled Bayer image for
+speed; `auto_light_trace.csv` logs its chosen settings and full-resolution
+predicted brightness/error. The dense `schedule.yaml`, usual `relight.csv`,
+right-camera mean/saturated fraction (diagnostics only), and `relight.json`
+provenance are also written. Fixed-light AE50 and scheduled
+variants remain separate and cache independently.
+
 For a smooth per-frame test on that bag, use
 [`configs/clid_stereo_sine_113through.yaml`](../configs/clid_stereo_sine_113through.yaml).
 It specifies all 575 frames: commanded light follows `0.5 + 0.4 sin(2πn/115 + 0.19)`
@@ -215,10 +252,13 @@ pixi run -e vslamlab clid-stereo demo "$BAG" \
   --control-plot
 ```
 
-`--control-plot` is available only with `demo` on Linux with an X display. It
-starts before SLAM and shows commanded light in `[0,1]` and exposure in EV on
+`--control-plot` (or `--ae-plot`) is available only with `demo` on Linux with an X display. It
+starts before SLAM and shows commanded light in `[0,1]` and equivalent exposure in ms
+(4 ms at 0 EV; not an independently measured camera shutter time) on
 separate live traces, with the current left-frame marker and both cameras'
-effective-power values. Like the Boreal AE plot, its marker follows image-file
+effective-power values. For auto-light variants the exposure plot marks the
+configured preference; its label
+also reports EV. Like the Boreal AE plot, its marker follows image-file
 opens; it does not prove that native SLAM processed every opened frame. The plot
 closes when SLAM exits and does not alter the prepared images or the run.
 

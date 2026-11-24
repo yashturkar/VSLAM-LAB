@@ -33,6 +33,7 @@ class ClidControlPlotTests(unittest.TestCase):
             values, lookup = load_control_trace(sequence)
             self.assertEqual(len(values), 3)
             self.assertEqual(values[1]['exposure_ev'], -.5)
+            self.assertAlmostEqual(values[1]['exposure_ms'], 4 * 2 ** -.5)
             self.assertEqual(lookup['200.png'], 1)
             monitor = FrameOpenMonitor(sequence / 'rgb_0')
             try:
